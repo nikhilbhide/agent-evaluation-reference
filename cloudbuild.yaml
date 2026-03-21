@@ -1,0 +1,141 @@
+# ============================================================
+# Cloud Build CI/CD Pipeline for the GCP Agent Evaluation Project
+#
+# STAGES:
+#   1. [CI]  Unit tests   — runs on EVERY pull request / push
+#   2. [CI]  Mock eval    — runs local mock agent, no real deployment needed
+#   3. [CD]  Deploy       — deploys new version to Cloud Run (staging revision)
+#   4. [CD]  Live eval    — calls the STAGED deployment via --endpoint
+#                           so all integrated components are exercised
+#   5. [CD]  Activate     — shifts 100% of traffic ONLY if quality gate passed
+#
+# HOW TO TRIGGER:
+#   Connect this repo to Cloud Build in the GCP console:
+#   Cloud Build → Triggers → Connect Repository → select your repo
+#   Set the trigger to fire on pushes to `main`.
+#
+# REQUIRED IAM on the Cloud Build service account:
+#   roles/aiplatform.user      — Vertex AI Evaluation API calls
+#   roles/run.admin            — Deploy and manage Cloud Run services
+#   roles/iam.serviceAccountUser
+# ============================================================
+
+steps:
+
+  # ── STAGE 1: Install dependencies ──────────────────────────────────────────
+  - id: 'install'
+    name: 'python:3.11-slim'
+    entrypoint: pip
+    args: ['install', '-e', '.[dev]', '--quiet']
+
+  # ── STAGE 2 [CI]: Unit tests — fast, mocked, no GCP calls ─────────────────
+  - id: 'unit-tests'
+    name: 'python:3.11-slim'
+    entrypoint: pytest
+    args: ['tests/', '-v']
+    waitFor: ['install']
+
+  # ── STAGE 3 [CI]: Evaluation with local mock agent ─────────────────────────
+  #    Ensures core evaluation logic is correct before we ever deploy.
+  #    Uses gemini-2.5-flash as the judge, but the AGENT is a local mock —
+  #    no staging deployment needed at this stage.
+  - id: 'ci-eval'
+    name: 'python:3.11-slim'
+    entrypoint: agent-eval
+    args:
+      - run-eval
+      - --dataset
+      - data/golden_dataset.json
+      - --experiment
+      - ci-eval-$SHORT_SHA
+      - --safety-threshold
+      - '0.9'
+    env:
+      - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID'
+    waitFor: ['unit-tests']
+
+  # ── STAGE 4 [CD]: Build and push Docker image ──────────────────────────────
+  - id: 'docker-build'
+    name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - -t
+      - 'gcr.io/$PROJECT_ID/customer-resolution-agent:$SHORT_SHA'
+      - .
+    waitFor: ['ci-eval']
+
+  - id: 'docker-push'
+    name: 'gcr.io/cloud-builders/docker'
+    args:
+      - push
+      - 'gcr.io/$PROJECT_ID/customer-resolution-agent:$SHORT_SHA'
+    waitFor: ['docker-build']
+
+  # ── STAGE 5 [CD]: Deploy new version to Cloud Run (NO traffic yet) ─────────
+  #    --no-traffic means the new revision gets 0% of real user traffic.
+  #    It is reachable via its revision URL only — perfect for evaluation.
+  - id: 'deploy-staging-revision'
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - customer-resolution-agent
+      - --image
+      - 'gcr.io/$PROJECT_ID/customer-resolution-agent:$SHORT_SHA'
+      - --region
+      - us-central1
+      - --no-traffic                    # ← KEY: 0% traffic until eval passes
+      - --tag
+      - 'canary-$SHORT_SHA'            # Gives a stable URL: canary-xxx---svc-hash.run.app
+      - --project
+      - $PROJECT_ID
+    waitFor: ['docker-push']
+
+  # ── STAGE 6 [CD]: Live evaluation against the STAGED deployment ────────────
+  #    --endpoint points to the canary revision URL (not the main service URL).
+  #    This means all real tool calls, sub-agents, databases, RAG retrievals
+  #    are exercised against real infrastructure, but zero real user traffic
+  #    is affected. If this step exits with code 1, Cloud Build stops here
+  #    and traffic is NEVER shifted to the bad revision.
+  - id: 'cd-eval'
+    name: 'python:3.11-slim'
+    entrypoint: agent-eval
+    args:
+      - run-eval
+      - --dataset
+      - data/golden_dataset.json
+      - --endpoint
+      - 'https://canary-$SHORT_SHA---customer-resolution-agent-uc.a.run.app'
+      - --experiment
+      - cd-eval-$SHORT_SHA
+      - --safety-threshold
+      - '0.9'
+    env:
+      - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID'
+    waitFor: ['deploy-staging-revision']
+
+  # ── STAGE 7 [CD]: Activate traffic ─────────────────────────────────────────
+  #    This step runs ONLY if Stage 6 (cd-eval) passed the quality gate.
+  #    It shifts 100% of traffic to the new revision.
+  - id: 'activate-traffic'
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - services
+      - update-traffic
+      - customer-resolution-agent
+      - --to-tags
+      - 'canary-$SHORT_SHA=100'
+      - --region
+      - us-central1
+      - --project
+      - $PROJECT_ID
+    waitFor: ['cd-eval']
+
+images:
+  - 'gcr.io/$PROJECT_ID/customer-resolution-agent:$SHORT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

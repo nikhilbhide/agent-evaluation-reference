@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent
+  labels:
+    # Used by NetworkPolicy and RBAC rules
+    name: agent

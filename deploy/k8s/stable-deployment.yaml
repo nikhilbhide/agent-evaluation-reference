@@ -1,0 +1,114 @@
+# ── Orchestrator Stable Deployment ──────────────────────────────────────────────
+#
+# This is the PRODUCTION version of the agent.
+# During a canary deployment:
+#   - This deployment remains UNTOUCHED (old image, same replica count).
+#   - The canary-deployment.yaml is created alongside it with 1 replica.
+#   - The Kubernetes Service selects BOTH deployments (same app label).
+#   - Traffic split is proportional to replica count:
+#       stable: 9 replicas → ~90% traffic
+#       canary: 1 replica  → ~10% traffic
+#
+# After the CD quality gate passes, promote_canary.sh:
+#   1. Updates THIS file's image tag to the new version.
+#   2. Scales canary replicas down to 0 (or deletes canary deployment).
+#
+# After the CD quality gate FAILS, rollback:
+#   1. Delete canary deployment → 100% traffic returns to stable automatically.
+#   2. No changes to this file needed.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer-resolution-agent-stable
+  namespace: agent
+  labels:
+    app: customer-resolution-agent
+    version: stable
+    # Managed-by label helps CI/CD tooling identify this deployment
+    managed-by: cloud-build
+spec:
+  # 9 replicas so canary (1 replica) gets ~10% of traffic.
+  # HPA (hpa.yaml) can scale this up/down based on CPU load.
+  replicas: 9
+  selector:
+    matchLabels:
+      app: customer-resolution-agent
+      version: stable
+  strategy:
+    # RollingUpdate: replace pods gradually, never take all replicas down at once.
+    # This is used during a PROMOTION (not canary) — e.g. when updating stable
+    # after the canary has been validated.
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2        # Allow up to 2 extra pods during the rollout
+      maxUnavailable: 1  # At most 1 pod can be unavailable at any time
+  template:
+    metadata:
+      labels:
+        app: customer-resolution-agent
+        version: stable
+    spec:
+      # Workload Identity: the pod uses this KSA, which is bound to
+      # a GCP service account with roles/aiplatform.user permission.
+      serviceAccountName: agent-workload-sa
+      containers:
+        - name: orchestrator
+          image: gcr.io/YOUR_PROJECT_ID/orchestrator:STABLE_TAG
+          ports:
+            - containerPort: 8080
+          env:
+            - name: GCP_PROJECT
+              valueFrom:
+                secretKeyRef:
+                  name: agent-config
+                  key: gcp_project
+            - name: MCP_SERVER_URL
+              value: "http://mcp-server.agent.svc.cluster.local"
+            - name: BILLING_AGENT_URL
+              value: "http://billing-agent.agent.svc.cluster.local"
+            - name: TECHNICAL_AGENT_URL
+              value: "http://technical-agent.agent.svc.cluster.local"
+            - name: ACCOUNT_AGENT_URL
+              value: "http://account-agent.agent.svc.cluster.local"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"         # Burst up to 2 vCPUs
+              memory: "1Gi"
+          # ── Probes ────────────────────────────────────────────────────────
+          # Startup probe: gives the pod 3 minutes to load the model.
+          # Without this, the liveness probe would restart the pod before
+          # the model even finishes loading.
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            failureThreshold: 36      # 36 * 5s = 3 minutes max startup time
+            periodSeconds: 5
+          # Liveness probe: restarts the pod if the process becomes unresponsive.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            failureThreshold: 3
+          # Readiness probe: removes pod from load balancer if it can't serve.
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            failureThreshold: 2
+      # Spread pods across nodes to avoid a single node failure taking everything down
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: customer-resolution-agent

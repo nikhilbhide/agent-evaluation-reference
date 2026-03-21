@@ -1,0 +1,45 @@
+# ── Horizontal Pod Autoscaler ─────────────────────────────────────────────────
+#
+# Automatically scales the STABLE deployment between 3 and 20 replicas
+# based on CPU utilisation. The canary deployment is intentionally NOT
+# autoscaled — it stays at exactly 1 replica to keep the traffic split
+# predictable during evaluation.
+#
+# Target CPU: 60% — scale out before pods become CPU-saturated.
+# With an LLM-based agent the bottleneck is usually network I/O to Vertex AI
+# rather than CPU, but this still prevents pod overload during traffic spikes.
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: customer-resolution-agent-stable
+  namespace: agent
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: customer-resolution-agent-stable
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+  behavior:
+    # Scale out quickly on traffic spikes (agent latency is noticeable)
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 4             # Add up to 4 pods per scale event
+          periodSeconds: 60
+    # Scale in slowly to avoid flapping
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 2             # Remove at most 2 pods per scale event
+          periodSeconds: 60

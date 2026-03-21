@@ -1,0 +1,134 @@
+# ── Sub-Agent Deployments ──────────────────────────────────────────────────────
+# Orchestrator is handled in the root stable/canary manifests.
+# These specialists are managed here as stable-only microservices.
+
+# ── Billing Agent ─────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-agent
+  namespace: agent
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: billing-agent
+  template:
+    metadata:
+      labels:
+        app: billing-agent
+    spec:
+      serviceAccountName: agent-workload-sa
+      containers:
+        - name: billing-agent
+          image: gcr.io/YOUR_PROJECT_ID/billing-agent:STABLE_TAG
+          ports:
+            - containerPort: 8080
+          env:
+            - name: GCP_PROJECT
+              valueFrom:
+                secretKeyRef:
+                  name: agent-config
+                  key: gcp_project
+            - name: MCP_SERVER_URL
+              value: "http://mcp-server.agent.svc.cluster.local"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: billing-agent
+  namespace: agent
+spec:
+  selector:
+    app: billing-agent
+  ports:
+    - port: 80
+      targetPort: 8080
+
+---
+# ── Technical Agent ───────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: technical-agent
+  namespace: agent
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: technical-agent
+  template:
+    metadata:
+      labels:
+        app: technical-agent
+    spec:
+      serviceAccountName: agent-workload-sa
+      containers:
+        - name: technical-agent
+          image: gcr.io/YOUR_PROJECT_ID/technical-agent:STABLE_TAG
+          ports:
+            - containerPort: 8080
+          env:
+            - name: GCP_PROJECT
+              valueFrom:
+                secretKeyRef:
+                  name: agent-config
+                  key: gcp_project
+            - name: MCP_SERVER_URL
+              value: "http://mcp-server.agent.svc.cluster.local"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: technical-agent
+  namespace: agent
+spec:
+  selector:
+    app: technical-agent
+  ports:
+    - port: 80
+      targetPort: 8080
+
+---
+# ── Account Agent ─────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-agent
+  namespace: agent
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: account-agent
+  template:
+    metadata:
+      labels:
+        app: account-agent
+    spec:
+      serviceAccountName: agent-workload-sa
+      containers:
+        - name: account-agent
+          image: gcr.io/YOUR_PROJECT_ID/account-agent:STABLE_TAG
+          ports:
+            - containerPort: 8080
+          env:
+            - name: GCP_PROJECT
+              valueFrom:
+                secretKeyRef:
+                  name: agent-config
+                  key: gcp_project
+            - name: MCP_SERVER_URL
+              value: "http://mcp-server.agent.svc.cluster.local"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: account-agent
+  namespace: agent
+spec:
+  selector:
+    app: account-agent
+  ports:
+    - port: 80
+      targetPort: 8080

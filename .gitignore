@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Environment & secrets — NEVER commit these
+.env
+.env.*
+!.env.example
+*_credentials.json
+application_default_credentials.json
+*-key.json
+*service-account*.json
+
+# GCP credentials
+gcloud/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Test / coverage artefacts
+.pytest_cache/
+.coverage
+htmlcov/
+test-results/
+junit.xml
+
+# Scratch / temp files
+test_model.py
+test_metric.py
+*.tmp
+
+# Kubernetes secrets (never commit real values)
+deploy/k8s/secret.yaml

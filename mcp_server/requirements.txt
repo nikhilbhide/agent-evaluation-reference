@@ -1,0 +1,6 @@
+fastapi>=0.100.0
+uvicorn[standard]>=0.22.0
+pydantic>=2.0.0
+requests>=2.31.0
+# Add RAG/Vector Search dependencies here in production
+# google-cloud-aiplatform>=1.60.0

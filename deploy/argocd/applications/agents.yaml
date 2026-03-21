@@ -1,0 +1,46 @@
+# ── ArgoCD Application: All Agents ───────────────────────────────────────────
+#
+# This single Application manages ALL agent deployments together:
+#   - Orchestrator
+#   - Billing Agent
+#   - Technical Agent
+#   - Account Agent (from deploy/k8s/agents/agents-deployment.yaml)
+#
+# WHY GROUPED?
+#   The orchestrator depends on the sub-agents being deployed.
+#   Grouping them lets ArgoCD sync them together in one operation.
+#   If you want independent rollback of individual agents, split into
+#   separate Applications (one per agent) — this is better for large teams
+#   but adds operational overhead for a reference implementation.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agents
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: YOUR_REPO_URL
+    targetRevision: main
+    path: deploy/k8s/agents
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: agent
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # RespectIgnoreDifferences: ArgoCD won't fight KEDA's replica count changes
+      # (KEDA will set replicas dynamically — we don't want ArgoCD reverting that)
+      - RespectIgnoreDifferences=true
+  # Tell ArgoCD to ignore the `replicas` field — KEDA manages this dynamically
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas

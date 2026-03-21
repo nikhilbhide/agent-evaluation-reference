@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-eval"
+version = "0.1.0"
+description = "Production grade GCP Agent Evaluation"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "google-cloud-aiplatform[evaluation]>=1.60.0",
+    "pandas>=2.0.0",
+    "google-cloud-storage>=2.10.0",
+    "google-auth>=2.20.0",
+    "requests>=2.31.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-mock>=3.12.0",
+    "responses>=0.25.0",
+    "mypy"
+]
+
+[project.scripts]
+agent-eval = "agent_eval.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,123 @@
+# ── MCP Server Deployment ─────────────────────────────────────────────────────
+#
+# HPA STRATEGY: Standard CPU-based (see mcp-hpa.yaml)
+#
+# WHY CPU FOR MCP SERVER?
+#   Unlike Gemini-backed agents (which spend most time WAITING for API responses),
+#   the MCP server actually does CPU work:
+#     - Embedding computation for search_knowledge_base
+#     - JSON serialisation/deserialisation of tool results
+#     - Potential in-memory vector index operations
+#   CPU is a meaningful load signal here. Target: 50% CPU utilisation.
+#
+# REPLICAS:
+#   Min 2 for HA — if one pod restarts, agents still have a live tool server.
+#   The MCP server is a hard dependency of all sub-agents. A single-replica
+#   MCP server means loss of ALL tool functionality on pod restart.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+  namespace: agent
+  labels:
+    app: mcp-server
+    component: tool-layer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mcp-server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0    # Never take the only replica down during updates
+  template:
+    metadata:
+      labels:
+        app: mcp-server
+    spec:
+      serviceAccountName: agent-workload-sa
+      containers:
+        - name: mcp-server
+          image: gcr.io/YOUR_PROJECT_ID/mcp-server:STABLE_TAG
+          ports:
+            - containerPort: 8080
+          env:
+            - name: GCP_PROJECT
+              valueFrom:
+                secretKeyRef:
+                  name: agent-config
+                  key: gcp_project
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            failureThreshold: 12
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 2
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server
+  namespace: agent
+spec:
+  selector:
+    app: mcp-server
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+  type: ClusterIP    # Internal only — agents call it via cluster DNS
+
+---
+# ── MCP Server HPA (CPU-based) ────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mcp-server
+  namespace: agent
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mcp-server
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300

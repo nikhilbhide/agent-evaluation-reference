@@ -1,0 +1,320 @@
+# =============================================================================
+# CD Pipeline — GitOps with ArgoCD
+#
+# WHAT CHANGED FROM THE OLD CD PIPELINE:
+#   Old: Pipeline ran kubectl apply directly (needed cluster credentials in CI)
+#   New: Pipeline commits a new image tag to Git → ArgoCD detects → syncs cluster
+#
+# WHY THIS IS BETTER:
+#   ✅ CI never touches the cluster — no kubeconfig secrets in GitHub Actions
+#   ✅ Git IS the deployment record — git log == who deployed what and when
+#   ✅ Rollback = git revert the image tag commit
+#   ✅ Drift detection: ArgoCD alerts if someone manually kubectl'd something
+#
+# THE FLOW (compare this to the old flow):
+#
+#   Old:  push → CI builds → CI deploys canary (kubectl) → eval → kubectl promote
+#   New:  push → CI builds → CI commits new tag to infra path → ArgoCD syncs canary
+#              → eval → CI commits promoted tag to stable → ArgoCD syncs stable
+#
+# PHASES (3-phase dark launch, same as before):
+#   Phase 1: Image built → canary tag written to deploy/k8s/agents/ → ArgoCD deploys
+#   Phase 1: Sanity check + evaluation hit canary via port-forward
+#   Phase 2: enable_canary_traffic.sh patches label → 20% real traffic
+#   Phase 3: promote_canary.sh writes stable tag → ArgoCD rolls out stable
+#
+# SECRETS:
+#   GCP_SA_KEY         — GCR push only (no cluster access needed!)
+#   GCP_PROJECT_ID     — GCP project
+#   GKE_CLUSTER_NAME   — For port-forward during eval only
+#   GKE_CLUSTER_ZONE   — For port-forward during eval only
+#   INFRA_REPO_TOKEN   — GitHub token to commit image tag to the infra branch
+#                        (use a fine-grained token with repo:write scope)
+# =============================================================================
+
+name: "CD — GitOps with ArgoCD (Dark Launch → Canary → Promote)"
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 1: Build all service images
+  # ════════════════════════════════════════════════════════════════════════════
+  build:
+    name: "Build & push all service images"
+    runs-on: ubuntu-latest
+    outputs:
+      short_sha: ${{ steps.sha.outputs.short }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute short SHA
+        id: sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker --quiet
+
+      # Build all images in parallel using a matrix would be ideal,
+      # but sequential is clearer for a reference implementation.
+      - name: Build and push — MCP Server
+        run: |
+          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/mcp-server:${{ steps.sha.outputs.short }}"
+          docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
+            -t "${IMAGE}" -f mcp_server/Dockerfile .
+          docker push "${IMAGE}"
+
+      - name: Build and push — Orchestrator
+        run: |
+          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/orchestrator:${{ steps.sha.outputs.short }}"
+          docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
+            -t "${IMAGE}" -f agents/orchestrator/Dockerfile .
+          docker push "${IMAGE}"
+
+      - name: Build and push — Billing Agent
+        run: |
+          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/billing-agent:${{ steps.sha.outputs.short }}"
+          docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
+            -t "${IMAGE}" -f agents/billing_agent/Dockerfile .
+          docker push "${IMAGE}"
+
+      - name: Build and push — Technical Agent
+        run: |
+          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/technical-agent:${{ steps.sha.outputs.short }}"
+          docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
+            -t "${IMAGE}" -f agents/technical_agent/Dockerfile .
+          docker push "${IMAGE}"
+
+      - name: Build and push — Account Agent
+        run: |
+          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/account-agent:${{ steps.sha.outputs.short }}"
+          docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
+            -t "${IMAGE}" -f agents/account_agent/Dockerfile .
+          docker push "${IMAGE}"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 2: Phase 1 — GitOps canary deploy (dark launch, 0% real traffic)
+  #
+  # Instead of running kubectl directly, we commit the new image tag to the
+  # canary deployment manifest. ArgoCD detects the git change and applies it.
+  # ════════════════════════════════════════════════════════════════════════════
+  gitops-canary-deploy:
+    name: "Phase 1 — GitOps: write canary tag → ArgoCD deploys"
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Use the infra token so we can push commits to trigger ArgoCD
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+
+      - name: "Write new image tags to canary manifests (dark launch)"
+        run: |
+          SHA=${{ needs.build.outputs.short_sha }}
+          PROJECT=${{ secrets.GCP_PROJECT_ID }}
+
+          # Update canary deployment image tags using sed
+          # In production, use kustomize or Helm for this instead of sed.
+          sed -i "s|image: gcr.io/${PROJECT}/orchestrator:.*|image: gcr.io/${PROJECT}/orchestrator:${SHA}|g" \
+            deploy/k8s/canary-deployment.yaml
+          sed -i "s|CANARY_TAG|${SHA}|g; s|YOUR_PROJECT_ID|${PROJECT}|g" \
+            deploy/k8s/canary-deployment.yaml
+
+      - name: "Commit image tag update to git (triggers ArgoCD)"
+        run: |
+          SHA=${{ needs.build.outputs.short_sha }}
+          git config user.name  "CD Pipeline"
+          git config user.email "cd-pipeline@github-actions"
+          git add deploy/k8s/
+          git commit -m "chore(deploy): canary dark launch ${SHA}
+
+          Phase 1: deploy canary with 0% real traffic for evaluation.
+          ArgoCD will sync this commit to the GKE cluster.
+          [skip ci]"
+          git push origin main
+
+          echo "✅ Image tag committed. ArgoCD will sync within ~3 minutes."
+          echo "   Monitor sync: kubectl get app agents -n argocd -w"
+
+      - name: "Wait for ArgoCD to sync canary"
+        run: |
+          # Wait until ArgoCD reports the 'agents' Application is Synced + Healthy
+          # This requires ArgoCD CLI or polling the API
+          echo "Waiting for ArgoCD sync (up to 5 minutes)..."
+          for i in $(seq 1 30); do
+            # Check if canary pod is ready via kubectl (still need GKE creds for eval)
+            sleep 10
+            echo "Checking canary pod readiness (attempt ${i}/30)..."
+            READY=$(kubectl get pods -n agent -l version=canary \
+              -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null || echo "")
+            if echo "${READY}" | grep -q "true"; then
+              echo "✅ Canary pod is ready."
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "❌ Canary pod never became ready after 5 minutes."
+              exit 1
+            fi
+          done
+
+      # Port-forward canary for evaluation
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ secrets.GKE_CLUSTER_NAME }}
+          location: ${{ secrets.GKE_CLUSTER_ZONE }}
+
+      - name: "Port-forward canary service for evaluation"
+        run: |
+          kubectl port-forward service/customer-resolution-agent-canary \
+            18080:80 -n agent &
+          echo $! > /tmp/portforward.pid
+          sleep 3
+
+      - name: "Sanity check"
+        run: |
+          pip install requests --quiet
+          python scripts/sanity_check.py \
+            --endpoint http://localhost:18080 \
+            --expected-version ${{ needs.build.outputs.short_sha }}
+
+      - name: "Evaluation quality gate"
+        run: |
+          pip install -e ".[dev]" --quiet
+          agent-eval run-eval \
+            --dataset data/golden_dataset.json \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --endpoint http://localhost:18080 \
+            --experiment "dark-eval-${{ needs.build.outputs.short_sha }}" \
+            --safety-threshold 0.9
+
+      - name: "Stop port-forward"
+        if: always()
+        run: kill $(cat /tmp/portforward.pid) 2>/dev/null || true
+
+      - name: "Rollback on failure — revert git commit"
+        if: failure()
+        run: |
+          echo "❌ Quality gate failed. Reverting the canary image tag commit..."
+          git revert HEAD --no-edit
+          git push origin main
+          echo "✅ Git reverted. ArgoCD will restore the old canary state."
+          echo "   (This is the GitOps rollback: revert the commit, not kubectl rollout undo)"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 3: Phase 2 — Enable canary traffic (20%), soak period
+  # ════════════════════════════════════════════════════════════════════════════
+  canary-traffic:
+    name: "Phase 2 — Enable 20% canary traffic + soak"
+    runs-on: ubuntu-latest
+    needs: [build, gitops-canary-deploy]
+    if: needs.gitops-canary-deploy.result == 'success'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ secrets.GKE_CLUSTER_NAME }}
+          location: ${{ secrets.GKE_CLUSTER_ZONE }}
+
+      - name: "Enable 20% real traffic to canary"
+        run: |
+          chmod +x scripts/enable_canary_traffic.sh
+          ./scripts/enable_canary_traffic.sh ${{ needs.build.outputs.short_sha }}
+
+      - name: "Soak period — monitor canary health"
+        run: |
+          echo "Monitoring canary for 3 minutes under real traffic..."
+          END=$(( $(date +%s) + 180 ))
+          while [ "$(date +%s)" -lt "${END}" ]; do
+            STATUS=$(kubectl get pods -n agent -l version=canary \
+              -o jsonpath='{.items[*].status.containerStatuses[*].state.waiting.reason}' 2>/dev/null || echo "")
+            if echo "${STATUS}" | grep -qiE "CrashLoopBackOff|OOMKilled|Error"; then
+              echo "❌ Canary pod crashed during soak: ${STATUS}"
+              exit 1
+            fi
+            echo "✅ Canary healthy. $(( (END - $(date +%s)) / 60 )) min remaining..."
+            sleep 30
+          done
+
+      - name: "Rollback soak failure"
+        if: failure()
+        run: |
+          chmod +x scripts/rollback_canary.sh
+          ./scripts/rollback_canary.sh || true
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 4: Phase 3 — GitOps promotion to stable
+  #
+  # Update the stable deployment image tag in git.
+  # ArgoCD triggers a rolling update automatically.
+  # No kubectl needed — pure GitOps.
+  # ════════════════════════════════════════════════════════════════════════════
+  gitops-promote:
+    name: "Phase 3 — GitOps: write stable tag → ArgoCD promotes"
+    runs-on: ubuntu-latest
+    needs: [build, canary-traffic]
+    if: needs.canary-traffic.result == 'success'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+
+      - name: "Update stable deployment image tags"
+        run: |
+          SHA=${{ needs.build.outputs.short_sha }}
+          PROJECT=${{ secrets.GCP_PROJECT_ID }}
+
+          # Update stable deployment manifests
+          for file in deploy/k8s/agents/agents-deployment.yaml \
+                      deploy/k8s/mcp-server/deployment.yaml \
+                      deploy/k8s/stable-deployment.yaml; do
+            sed -i "s|:STABLE_TAG|:${SHA}|g" "${file}" || true
+            sed -i "s|YOUR_PROJECT_ID|${PROJECT}|g" "${file}" || true
+          done
+
+      - name: "Commit stable tag to git (ArgoCD will roll out)"
+        run: |
+          SHA=${{ needs.build.outputs.short_sha }}
+          git config user.name  "CD Pipeline"
+          git config user.email "cd-pipeline@github-actions"
+          git add deploy/k8s/
+          git commit -m "chore(deploy): promote ${SHA} to stable
+
+          Phase 3: all agents promoted after passing:
+            ✅ Dark launch evaluation (safety >= 0.9)
+            ✅ 3-minute canary soak at 20% traffic
+
+          ArgoCD will perform zero-downtime rolling update.
+          [skip ci]"
+          git push origin main
+
+          echo "====================================================="
+          echo " ✅ GitOps promotion complete!"
+          echo " ArgoCD is rolling out stable version: ${SHA}"
+          echo " Monitor: kubectl rollout status deployment/orchestrator -n agent"
+          echo " Git history = complete deployment audit trail"
+          echo "====================================================="

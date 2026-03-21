@@ -1,0 +1,133 @@
+# =============================================================================
+# CI Quality Gate — Runs on every Pull Request targeting `main`
+#
+# PURPOSE:
+#   Catch regressions BEFORE code is merged. No deployment needed.
+#   The agent is a local mock (Gemini model called directly), so this
+#   workflow only needs GCP credentials for Vertex AI Evaluation (the judge),
+#   not for any deployed infrastructure.
+#
+# WHAT BLOCKS MERGE:
+#   1. Unit tests fail    → pytest exits with code 1
+#   2. Quality gate fails → agent-eval exits with code 1
+#                           (safety/mean < 0.9 OR evaluation crashes)
+#
+# SECRETS REQUIRED (set in GitHub → Settings → Secrets):
+#   GCP_SA_KEY      — JSON key for CI service account
+#                     Needs: roles/aiplatform.user (for Vertex AI Evaluation)
+#   GCP_PROJECT_ID  — Your GCP project ID
+# =============================================================================
+
+name: "CI — Agent Quality Gate"
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      # Only run when agent or evaluation code changes (skip docs-only PRs)
+      - "src/**"
+      - "agent/**"
+      - "data/**"
+      - "tests/**"
+      - "pyproject.toml"
+
+concurrency:
+  # Cancel in-progress CI runs for the same PR when a new commit is pushed.
+  # Saves cost and keeps the PR feedback fast.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci-quality-gate:
+    name: "Unit Tests + Mock Evaluation"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # Allows posting the results as a PR comment
+
+    steps:
+      # ── Setup ──────────────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package and dev deps
+        run: pip install -e ".[dev]"
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      # ── Stage 1: Unit Tests (fast, fully mocked, no GCP calls) ────────────
+      # These tests validate:
+      #   - Agent initialization and error handling (mock GenerativeModel)
+      #   - Metric rubric creation and structure
+      #   - Config resolution logic
+      #   - CLI argument parsing
+      - name: "Stage 1 — Run unit tests"
+        run: |
+          pytest tests/ -v \
+            --tb=short \
+            --junit-xml=test-results/unit-tests.xml
+        # Fail fast: if unit tests fail, don't waste time on evaluation
+
+      - name: Upload unit test results
+        uses: actions/upload-artifact@v4
+        if: always()    # Upload even on failure so we can inspect results
+        with:
+          name: unit-test-results
+          path: test-results/
+
+      # ── Stage 2: CI Evaluation (mock agent, Vertex AI as judge) ────────────
+      # The mock agent (src/agent_eval/agent/core.py) calls Gemini directly
+      # to simulate the Customer Resolution Hub. No deployment needed.
+      #
+      # What this validates:
+      #   - The EVALUATION FRAMEWORK itself is working correctly
+      #   - The golden dataset hasn't been corrupted
+      #   - The custom metric rubric produces valid scores
+      #   - Safety score meets the minimum bar (0.9)
+      #
+      # What this does NOT validate:
+      #   - Real tool integrations (billing API, knowledge base, etc.)
+      #   - Multi-agent routing between real sub-agents
+      #   - Latency under real production load
+      #   → Those are validated by the CD quality gate (cd.yml)
+      - name: "Stage 2 — CI evaluation (mock agent)"
+        env:
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          agent-eval run-eval \
+            --dataset data/golden_dataset.json \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --experiment "ci-eval-pr-${{ github.event.pull_request.number }}" \
+            --safety-threshold 0.9
+        # Exit code 1 → quality gate failed → PR cannot be merged
+
+      # ── Stage 3: Post results as PR comment ───────────────────────────────
+      - name: Post evaluation summary to PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const outcome = '${{ job.status }}';
+            const sha = '${{ github.event.pull_request.head.sha }}'.slice(0, 7);
+            const icon = outcome === 'success' ? '✅' : '❌';
+            const body = `## ${icon} CI Quality Gate — \`${sha}\`
+            **Status:** ${outcome}
+            **Unit tests:** Check the [uploaded artifact](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.
+            **Evaluation experiment:** \`ci-eval-pr-${{ github.event.pull_request.number }}\`
+            > View full metrics in [Vertex AI Experiments](https://console.cloud.google.com/vertex-ai/experiments?project=${{ secrets.GCP_PROJECT_ID }})`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });

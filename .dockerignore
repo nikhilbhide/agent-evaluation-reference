@@ -1,0 +1,36 @@
+# Exclude everything not needed to run the agent binary in Docker.
+# A lean Docker image = faster pulls, smaller attack surface.
+
+# Python dev artifacts
+venv/
+.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.egg-info/
+dist/
+build/
+
+# Evaluation framework (not needed inside the agent container)
+src/
+tests/
+data/
+scripts/
+deploy/
+
+# CI/CD config
+.github/
+cloudbuild.yaml
+
+# Docs & project files
+README.md
+CONTRIBUTING.md
+Makefile
+.env*
+*.json          # excludes golden_dataset etc; agent/requirements.txt is kept
+!agent/         # keep the agent/ directory
+pyproject.toml
+
+# Secrets
+*credentials*.json
+*-key.json
