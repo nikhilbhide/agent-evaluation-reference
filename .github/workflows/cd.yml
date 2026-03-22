@@ -130,7 +130,7 @@ jobs:
 
           # Update canary deployment image tags using sed
           # In production, use kustomize or Helm for this instead of sed.
-          sed -i "s|image: gcr.io/${PROJECT}/orchestrator:.*|image: gcr.io/${PROJECT}/orchestrator:${SHA}|g" \
+          sed -i "s|image: us-docker.pkg.dev/${PROJECT}/gcr.io/orchestrator:.*|image: us-docker.pkg.dev/${PROJECT}/gcr.io/orchestrator:${SHA}|g" \
             deploy/k8s/canary-deployment.yaml
           sed -i "s|CANARY_TAG|${SHA}|g; s|YOUR_PROJECT_ID|${PROJECT}|g" \
             deploy/k8s/canary-deployment.yaml
