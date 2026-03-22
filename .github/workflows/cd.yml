@@ -121,7 +121,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           # Use the infra token so we can push commits to trigger ArgoCD
-          token: ${{ secrets.INFRA_REPO_TOKEN }}
+          token: ${{ github.token }}
 
       - name: "Write new image tags to canary manifests (dark launch)"
         run: |
@@ -288,7 +288,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.INFRA_REPO_TOKEN }}
+          token: ${{ github.token }}
 
       - name: "Update stable deployment image tags"
         run: |

@@ -280,15 +280,23 @@ chmod +x ./scripts/setup_wif.sh
 ```
 
 ### 2. Add GitHub Secrets
-The script above will output two values at the end. Go to your GitHub Repository -> **Settings** -> **Secrets and variables** -> **Actions** and add these *Repository Secrets*:
+The easiest way is to use the automated setup script (requires [GitHub CLI](https://cli.github.com/)):
+```bash
+chmod +x ./scripts/setup_github_secrets.sh
+./scripts/setup_github_secrets.sh YOUR_PROJECT_ID YOUR_GITHUB_USER/YOUR_REPO_NAME
+```
+
+Alternatively, go to your GitHub Repository -> **Settings** -> **Secrets and variables** -> **Actions** and add these *Repository Secrets* manually:
 
 | Secret Name | Value |
 |---|---|
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output from the WIF script (e.g., `projects/123/locations/global/workloadIdentityPools/...`) |
 | `GCP_SERVICE_ACCOUNT` | Output from the script (e.g., `agent-runtime@YOUR_PROJECT.iam.gserviceaccount.com`) |
 | `GCP_PROJECT_ID` | Your GCP project ID |
+| `GKE_CLUSTER_NAME` | Your GKE cluster name (e.g., `agent-eval-cluster`) |
+| `GKE_CLUSTER_ZONE` | Your GKE cluster zone (e.g., `us-central1`) |
 
-*(There is **no** `GCP_SA_KEY` needed — WIF uses short-lived OIDC tokens!)*
+*(There is **no** `GCP_SA_KEY` or `INFRA_REPO_TOKEN` needed — WIF and the automatic GITHUB_TOKEN handle authentication!)*
 
 ---
 
