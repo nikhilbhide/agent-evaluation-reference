@@ -53,8 +53,7 @@ echo "[2/7] Creating GKE Autopilot cluster (this takes ~5 minutes)..."
 gcloud container clusters create-auto "${CLUSTER_NAME}" \
   --region="${REGION}" \
   --project="${PROJECT_ID}" \
-  --release-channel=regular \
-  --workload-pool="${PROJECT_ID}.svc.id.goog" || echo "Cluster may already exist, continuing..."
+  --release-channel=regular || echo "Cluster may already exist, continuing..."
 echo "✅ Cluster ready."
 
 # Get credentials

@@ -31,7 +31,7 @@ gcloud services enable iamcredentials.googleapis.com --project="${PROJECT_ID}"
 gcloud iam workload-identity-pools create "github-pool" \
   --project="${PROJECT_ID}" \
   --location="global" \
-  --display-name="GitHub Actions Pool"
+  --display-name="GitHub Actions Pool" || echo "Pool already exists, continuing..."
 
 # 3. Create the Workload Identity Provider
 # This tells GCP to trust tokens coming from githubusercontent.com
@@ -41,7 +41,7 @@ gcloud iam workload-identity-pools providers create-oidc "github-provider" \
   --workload-identity-pool="github-pool" \
   --display-name="GitHub Provider" \
   --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository" \
-  --issuer-uri="https://token.actions.githubusercontent.com"
+  --issuer-uri="https://token.actions.githubusercontent.com" || echo "Provider already exists, continuing..."
 
 # 4. Get the Pool ID (needed for GitHub)
 POOL_ID=$(gcloud iam workload-identity-pools describe "github-pool" \
