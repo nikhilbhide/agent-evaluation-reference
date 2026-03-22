@@ -44,6 +44,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write   # Allows posting the results as a PR comment
+      id-token: write
 
     steps:
       # ── Setup ──────────────────────────────────────────────────────────────
