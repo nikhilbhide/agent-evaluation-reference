@@ -19,7 +19,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: customer-resolution-agent-stable
-  minReplicas: 3
+  minReplicas: 1
   maxReplicas: 20
   metrics:
     - type: Resource

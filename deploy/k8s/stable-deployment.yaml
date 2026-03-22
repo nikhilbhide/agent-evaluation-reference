@@ -30,7 +30,7 @@ metadata:
 spec:
   # 9 replicas so canary (1 replica) gets ~10% of traffic.
   # HPA (hpa.yaml) can scale this up/down based on CPU load.
-  replicas: 9
+  replicas: 1
   selector:
     matchLabels:
       app: customer-resolution-agent
@@ -73,7 +73,7 @@ spec:
               value: "http://account-agent.agent.svc.cluster.local"
           resources:
             requests:
-              cpu: "500m"
+              cpu: "250m"
               memory: "512Mi"
             limits:
               cpu: "2"         # Burst up to 2 vCPUs
