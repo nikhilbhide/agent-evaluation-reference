@@ -22,5 +22,5 @@ metadata:
   namespace: agent
   annotations:
     # This annotation is what binds the KSA to the GCP Service Account.
-    # Replace YOUR_PROJECT_ID with your actual project ID.
-    iam.gke.io/gcp-service-account: agent-runtime@YOUR_PROJECT_ID.iam.gserviceaccount.com
+    # Replace hr-policy-agent-486811 with your actual project ID.
+    iam.gke.io/gcp-service-account: agent-runtime@hr-policy-agent-486811.iam.gserviceaccount.com
