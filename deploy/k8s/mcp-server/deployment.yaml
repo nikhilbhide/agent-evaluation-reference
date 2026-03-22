@@ -41,7 +41,7 @@ spec:
       serviceAccountName: agent-workload-sa
       containers:
         - name: mcp-server
-          image: gcr.io/YOUR_PROJECT_ID/mcp-server:STABLE_TAG
+          image: us-docker.pkg.dev/YOUR_PROJECT_ID/gcr.io/mcp-server:STABLE_TAG
           ports:
             - containerPort: 8080
           env:

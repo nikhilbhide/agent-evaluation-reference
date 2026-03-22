@@ -54,7 +54,7 @@ spec:
       serviceAccountName: agent-workload-sa
       containers:
         - name: orchestrator
-          image: gcr.io/YOUR_PROJECT_ID/orchestrator:STABLE_TAG
+          image: us-docker.pkg.dev/YOUR_PROJECT_ID/gcr.io/orchestrator:STABLE_TAG
           ports:
             - containerPort: 8080
           env:

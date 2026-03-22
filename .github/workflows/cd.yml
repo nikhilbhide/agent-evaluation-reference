@@ -73,35 +73,35 @@ jobs:
       # but sequential is clearer for a reference implementation.
       - name: Build and push — MCP Server
         run: |
-          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/mcp-server:${{ steps.sha.outputs.short }}"
+          IMAGE="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/mcp-server:${{ steps.sha.outputs.short }}"
           docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
             -t "${IMAGE}" -f mcp_server/Dockerfile .
           docker push "${IMAGE}"
 
       - name: Build and push — Orchestrator
         run: |
-          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/orchestrator:${{ steps.sha.outputs.short }}"
+          IMAGE="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/orchestrator:${{ steps.sha.outputs.short }}"
           docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
             -t "${IMAGE}" -f agents/orchestrator/Dockerfile .
           docker push "${IMAGE}"
 
       - name: Build and push — Billing Agent
         run: |
-          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/billing-agent:${{ steps.sha.outputs.short }}"
+          IMAGE="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/billing-agent:${{ steps.sha.outputs.short }}"
           docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
             -t "${IMAGE}" -f agents/billing_agent/Dockerfile .
           docker push "${IMAGE}"
 
       - name: Build and push — Technical Agent
         run: |
-          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/technical-agent:${{ steps.sha.outputs.short }}"
+          IMAGE="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/technical-agent:${{ steps.sha.outputs.short }}"
           docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
             -t "${IMAGE}" -f agents/technical_agent/Dockerfile .
           docker push "${IMAGE}"
 
       - name: Build and push — Account Agent
         run: |
-          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/account-agent:${{ steps.sha.outputs.short }}"
+          IMAGE="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/account-agent:${{ steps.sha.outputs.short }}"
           docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
             -t "${IMAGE}" -f agents/account_agent/Dockerfile .
           docker push "${IMAGE}"

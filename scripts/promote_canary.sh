@@ -33,7 +33,7 @@ PROJECT_ID="${2:?Usage: $0 <CANARY_IMAGE_TAG> <PROJECT_ID>}"
 NAMESPACE="agent"
 STABLE_DEPLOY="customer-resolution-agent-stable"
 CANARY_DEPLOY="customer-resolution-agent-canary"
-IMAGE_BASE="gcr.io/${PROJECT_ID}/customer-resolution-agent"
+IMAGE_BASE="us-docker.pkg.dev/${PROJECT_ID}/gcr.io/orchestrator"
 NEW_IMAGE="${IMAGE_BASE}:${CANARY_TAG}"
 
 echo "====================================================="
@@ -60,7 +60,7 @@ echo "✅ Canary has ${CANARY_READY} ready replica(s)."
 echo ""
 echo "[2/5] Updating stable deployment image to ${NEW_IMAGE}..."
 kubectl set image deployment/"${STABLE_DEPLOY}" \
-    agent="${NEW_IMAGE}" \
+    orchestrator="${NEW_IMAGE}" \
     -n "${NAMESPACE}"
 
 echo "✅ Image updated on stable deployment."
