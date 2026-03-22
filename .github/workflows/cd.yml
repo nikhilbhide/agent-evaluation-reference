@@ -73,38 +73,48 @@ jobs:
       # but sequential is clearer for a reference implementation.
       - name: Build and push — MCP Server
         run: |
-          IMAGE="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/mcp-server:${{ steps.sha.outputs.short }}"
+          IMAGE_PATH="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/mcp-server"
           docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
-            -t "${IMAGE}" -f mcp_server/Dockerfile .
-          docker push "${IMAGE}"
+            -t "${IMAGE_PATH}:${{ steps.sha.outputs.short }}" \
+            -t "${IMAGE_PATH}:latest" -f mcp_server/Dockerfile .
+          docker push "${IMAGE_PATH}:${{ steps.sha.outputs.short }}"
+          docker push "${IMAGE_PATH}:latest"
 
       - name: Build and push — Orchestrator
         run: |
-          IMAGE="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/orchestrator:${{ steps.sha.outputs.short }}"
+          IMAGE_PATH="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/orchestrator"
           docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
-            -t "${IMAGE}" -f agents/orchestrator/Dockerfile .
-          docker push "${IMAGE}"
+            -t "${IMAGE_PATH}:${{ steps.sha.outputs.short }}" \
+            -t "${IMAGE_PATH}:latest" -f agents/orchestrator/Dockerfile .
+          docker push "${IMAGE_PATH}:${{ steps.sha.outputs.short }}"
+          docker push "${IMAGE_PATH}:latest"
 
       - name: Build and push — Billing Agent
         run: |
-          IMAGE="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/billing-agent:${{ steps.sha.outputs.short }}"
+          IMAGE_PATH="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/billing-agent"
           docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
-            -t "${IMAGE}" -f agents/billing_agent/Dockerfile .
-          docker push "${IMAGE}"
+            -t "${IMAGE_PATH}:${{ steps.sha.outputs.short }}" \
+            -t "${IMAGE_PATH}:latest" -f agents/billing_agent/Dockerfile .
+          docker push "${IMAGE_PATH}:${{ steps.sha.outputs.short }}"
+          docker push "${IMAGE_PATH}:latest"
 
       - name: Build and push — Technical Agent
         run: |
-          IMAGE="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/technical-agent:${{ steps.sha.outputs.short }}"
+          IMAGE_PATH="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/technical-agent"
           docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
-            -t "${IMAGE}" -f agents/technical_agent/Dockerfile .
-          docker push "${IMAGE}"
+            -t "${IMAGE_PATH}:${{ steps.sha.outputs.short }}" \
+            -t "${IMAGE_PATH}:latest" -f agents/technical_agent/Dockerfile .
+          docker push "${IMAGE_PATH}:${{ steps.sha.outputs.short }}"
+          docker push "${IMAGE_PATH}:latest"
 
       - name: Build and push — Account Agent
         run: |
-          IMAGE="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/account-agent:${{ steps.sha.outputs.short }}"
+          IMAGE_PATH="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/gcr.io/account-agent"
           docker build --build-arg APP_VERSION=${{ steps.sha.outputs.short }} \
-            -t "${IMAGE}" -f agents/account_agent/Dockerfile .
-          docker push "${IMAGE}"
+            -t "${IMAGE_PATH}:${{ steps.sha.outputs.short }}" \
+            -t "${IMAGE_PATH}:latest" -f agents/account_agent/Dockerfile .
+          docker push "${IMAGE_PATH}:${{ steps.sha.outputs.short }}"
+          docker push "${IMAGE_PATH}:latest"
 
   # ════════════════════════════════════════════════════════════════════════════
   # JOB 2: Phase 1 — GitOps canary deploy (dark launch, 0% real traffic)
