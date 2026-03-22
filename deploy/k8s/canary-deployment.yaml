@@ -45,7 +45,7 @@ spec:
       serviceAccountName: agent-workload-sa
       containers:
         - name: orchestrator
-          image: gcr.io/YOUR_PROJECT_ID/orchestrator:CANARY_TAG
+          image: gcr.io/hr-policy-agent-486811/orchestrator:700e873
           ports:
             - containerPort: 8080
           env:
