@@ -280,15 +280,15 @@ chmod +x ./scripts/setup_wif.sh
 ```
 
 ### 2. Add GitHub Secrets
-The script above will output two values at the end. Go to your GitHub Repository -> **Settings** -> **Secrets and variables** -> **Actions** and add these 3 *Repository Secrets*:
+The script above will output two values at the end. Go to your GitHub Repository -> **Settings** -> **Secrets and variables** -> **Actions** and add these *Repository Secrets*:
 
 | Secret Name | Value |
 |---|---|
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output from the WIF script (e.g., `projects/123/locations/global/workloadIdentityPools/...`) |
+| `GCP_SERVICE_ACCOUNT` | Output from the script (e.g., `agent-runtime@YOUR_PROJECT.iam.gserviceaccount.com`) |
 | `GCP_PROJECT_ID` | Your GCP project ID |
-| `GCP_WIF_PROVIDER` | Output from the WIF script (e.g., `projects/123/locations/global/workloadIdentityPools/...`) |
-| `GCP_SA_EMAIL` | Output from the script (e.g., `agent-runtime@YOUR_PROJECT.iam.gserviceaccount.com`) |
 
-*(There is **no** `GCP_SA_KEY` needed due to WIF!)*
+*(There is **no** `GCP_SA_KEY` needed — WIF uses short-lived OIDC tokens!)*
 
 ---
 

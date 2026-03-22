@@ -23,13 +23,14 @@
 #   Phase 2: enable_canary_traffic.sh patches label → 20% real traffic
 #   Phase 3: promote_canary.sh writes stable tag → ArgoCD rolls out stable
 #
-# SECRETS:
-#   GCP_SA_KEY         — GCR push only (no cluster access needed!)
-#   GCP_PROJECT_ID     — GCP project
-#   GKE_CLUSTER_NAME   — For port-forward during eval only
-#   GKE_CLUSTER_ZONE   — For port-forward during eval only
-#   INFRA_REPO_TOKEN   — GitHub token to commit image tag to the infra branch
-#                        (use a fine-grained token with repo:write scope)
+# SECRETS (set in GitHub → Settings → Secrets and variables → Actions):
+#   GCP_WORKLOAD_IDENTITY_PROVIDER — WIF provider path (from setup_wif.sh)
+#   GCP_SERVICE_ACCOUNT            — SA email (no JSON key needed!)
+#   GCP_PROJECT_ID                 — GCP project
+#   GKE_CLUSTER_NAME               — For port-forward during eval only
+#   GKE_CLUSTER_ZONE               — For port-forward during eval only
+#   INFRA_REPO_TOKEN               — GitHub token to commit image tag to the infra branch
+#                                    (use a fine-grained token with repo:write scope)
 # =============================================================================
 
 name: "CD — GitOps with ArgoCD (Dark Launch → Canary → Promote)"

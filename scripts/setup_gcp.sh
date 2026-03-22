@@ -3,13 +3,14 @@
 # setup_gcp.sh — One-time GCP infrastructure setup for the reference project.
 #
 # Run this ONCE before your first deployment. It:
-#   1. Enables required GCP APIs
+#   1. Enables required GCP APIs (incl. Artifact Registry)
 #   2. Creates a GKE cluster
 #   3. Creates a GCP Service Account for the agent runtime
-#   4. Grants Vertex AI permissions to that SA
-#   5. Configures Workload Identity (KSA → GSA binding)
-#   6. Applies base Kubernetes manifests
-#   7. Creates the agent-config Secret
+#   4. Grants IAM roles (Vertex AI, Artifact Registry, Storage)
+#   5. Creates gcr.io Artifact Registry repository for Docker images
+#   6. Configures Workload Identity (KSA → GSA binding)
+#   7. Applies base Kubernetes manifests
+#   8. Creates the agent-config Secret
 #
 # USAGE:
 #   ./scripts/setup_gcp.sh <PROJECT_ID> <CLUSTER_NAME> <ZONE>
@@ -37,19 +38,21 @@ echo "====================================================="
 
 # ── Step 1: Enable APIs ───────────────────────────────────────────────────────
 echo ""
-echo "[1/7] Enabling required APIs..."
+echo "[1/8] Enabling required APIs..."
 gcloud services enable \
   aiplatform.googleapis.com \
   container.googleapis.com \
   containerregistry.googleapis.com \
+  artifactregistry.googleapis.com \
   cloudbuild.googleapis.com \
+  iamcredentials.googleapis.com \
   --project="${PROJECT_ID}"
 echo "✅ APIs enabled."
 
 # ── Step 2: Create GKE Autopilot cluster ──────────────────────────────────────
 # Using Autopilot: no node pool management needed, Workload Identity enabled by default.
 echo ""
-echo "[2/7] Creating GKE Autopilot cluster (this takes ~5 minutes)..."
+echo "[2/8] Creating GKE Autopilot cluster (this takes ~5 minutes)..."
 gcloud container clusters create-auto "${CLUSTER_NAME}" \
   --region="${REGION}" \
   --project="${PROJECT_ID}" \
@@ -63,23 +66,51 @@ gcloud container clusters get-credentials "${CLUSTER_NAME}" \
 
 # ── Step 3: Create GCP Service Account ───────────────────────────────────────
 echo ""
-echo "[3/7] Creating GCP Service Account: ${GSA_NAME}..."
+echo "[3/8] Creating GCP Service Account: ${GSA_NAME}..."
 gcloud iam service-accounts create "${GSA_NAME}" \
   --display-name="Agent Runtime Service Account" \
   --project="${PROJECT_ID}" || echo "SA may already exist, continuing..."
 echo "✅ Service Account created."
 
-# ── Step 4: Grant Vertex AI permissions ─────────────────────────────────────
+# ── Step 4: Grant IAM roles ─────────────────────────────────────────────────
 echo ""
-echo "[4/7] Granting Vertex AI user role to ${GSA_EMAIL}..."
+echo "[4/8] Granting IAM roles to ${GSA_EMAIL}..."
+
+# Vertex AI — needed for Gemini model calls and evaluation
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${GSA_EMAIL}" \
-  --role="roles/aiplatform.user"
-echo "✅ IAM binding added."
+  --role="roles/aiplatform.user" \
+  --quiet
 
-# ── Step 5: Configure Workload Identity ──────────────────────────────────────
+# Artifact Registry Admin — needed to create and push Docker images to gcr.io
+# (gcr.io is backed by Artifact Registry in newer GCP projects)
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${GSA_EMAIL}" \
+  --role="roles/artifactregistry.admin" \
+  --quiet
+
+# Storage Admin — needed for legacy gcr.io bucket operations
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${GSA_EMAIL}" \
+  --role="roles/storage.admin" \
+  --quiet
+
+echo "✅ IAM roles granted (aiplatform.user, artifactregistry.admin, storage.admin)."
+
+# ── Step 5: Create gcr.io Artifact Registry repository ──────────────────────
+# In newer GCP projects, gcr.io is routed through Artifact Registry.
+# The repository MUST exist before the first docker push, unlike legacy GCR.
 echo ""
-echo "[5/7] Configuring Workload Identity (KSA → GSA)..."
+echo "[5/8] Creating gcr.io Artifact Registry repository..."
+gcloud artifacts repositories create gcr.io \
+  --repository-format=docker \
+  --location=us \
+  --project="${PROJECT_ID}" || echo "Repository may already exist, continuing..."
+echo "✅ gcr.io repository ready."
+
+# ── Step 6: Configure Workload Identity ──────────────────────────────────────
+echo ""
+echo "[6/8] Configuring Workload Identity (KSA → GSA)..."
 
 # Create namespace and KSA first
 kubectl apply -f deploy/k8s/namespace.yaml
@@ -95,18 +126,18 @@ gcloud iam service-accounts add-iam-policy-binding "${GSA_EMAIL}" \
   --project="${PROJECT_ID}"
 echo "✅ Workload Identity configured."
 
-# ── Step 6: Apply base Kubernetes manifests ───────────────────────────────────
+# ── Step 7: Apply base Kubernetes manifests ───────────────────────────────────
 echo ""
-echo "[6/7] Applying base Kubernetes manifests..."
+echo "[7/8] Applying base Kubernetes manifests..."
 sed "s|YOUR_PROJECT_ID|${PROJECT_ID}|g" \
   deploy/k8s/stable-deployment.yaml | kubectl apply -f -
 kubectl apply -f deploy/k8s/service.yaml
 kubectl apply -f deploy/k8s/hpa.yaml
 echo "✅ Base manifests applied."
 
-# ── Step 7: Create the agent-config Secret ────────────────────────────────────
+# ── Step 8: Create the agent-config Secret ────────────────────────────────────
 echo ""
-echo "[7/7] Creating agent-config Secret..."
+echo "[8/8] Creating agent-config Secret..."
 kubectl create secret generic agent-config \
   --namespace="${NAMESPACE}" \
   --from-literal=gcp_project="${PROJECT_ID}" \
@@ -115,19 +146,25 @@ echo "✅ Secret created."
 
 echo ""
 echo "====================================================="
-echo " ✅ Setup complete!"
+echo " ✅ GCP Infrastructure Setup Complete!"
 echo ""
 echo " Next steps:"
-echo "   1. Add these GitHub Actions secrets:"
-echo "      GCP_PROJECT_ID  = ${PROJECT_ID}"
-echo "      GKE_CLUSTER_NAME = ${CLUSTER_NAME}"
-echo "      GKE_CLUSTER_ZONE = ${ZONE}"
-echo "      GCP_SA_KEY       = (JSON key for a CI service account)"
+echo "   1. Run the WIF script to connect GitHub Actions to GCP:"
+echo "      ./scripts/setup_wif.sh ${PROJECT_ID} YOUR_GITHUB_USER/YOUR_REPO_NAME"
 echo ""
-echo "   2. Push to main to trigger your first CD deployment:"
+echo "   2. Add these GitHub Actions secrets (WIF script will output the first two):"
+echo "      GCP_WORKLOAD_IDENTITY_PROVIDER = (output from setup_wif.sh)"
+echo "      GCP_SERVICE_ACCOUNT            = ${GSA_EMAIL}"
+echo "      GCP_PROJECT_ID                 = ${PROJECT_ID}"
+echo "      GKE_CLUSTER_NAME               = ${CLUSTER_NAME}"
+echo "      GKE_CLUSTER_ZONE               = ${ZONE}"
+echo ""
+echo "   ⚠️  No GCP_SA_KEY needed — WIF uses short-lived OIDC tokens!"
+echo ""
+echo "   3. Push to main to trigger your first CD deployment:"
 echo "      git push origin main"
 echo ""
-echo "   3. Test locally:"
+echo "   4. Test locally:"
 echo "      pip install -e '.[dev]'"
 echo "      agent-eval run-eval --dataset data/golden_dataset.json"
 echo "====================================================="

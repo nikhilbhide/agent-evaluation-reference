@@ -35,12 +35,17 @@ gcloud iam workload-identity-pools create "github-pool" \
 
 # 3. Create the Workload Identity Provider
 # This tells GCP to trust tokens coming from githubusercontent.com
+# IMPORTANT: --attribute-condition is REQUIRED by GCP. Without it, the provider
+# creation will fail with "INVALID_ARGUMENT: The attribute condition must reference
+# one of the provider's claims." This condition also acts as a security boundary,
+# ensuring only YOUR repository can impersonate the service account.
 gcloud iam workload-identity-pools providers create-oidc "github-provider" \
   --project="${PROJECT_ID}" \
   --location="global" \
   --workload-identity-pool="github-pool" \
   --display-name="GitHub Provider" \
   --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository" \
+  --attribute-condition="attribute.repository=='${REPO_NAME}'" \
   --issuer-uri="https://token.actions.githubusercontent.com" || echo "Provider already exists, continuing..."
 
 # 4. Get the Pool ID (needed for GitHub)

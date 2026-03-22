@@ -12,10 +12,10 @@
 #   2. Quality gate fails → agent-eval exits with code 1
 #                           (safety/mean < 0.9 OR evaluation crashes)
 #
-# SECRETS REQUIRED (set in GitHub → Settings → Secrets):
-#   GCP_SA_KEY      — JSON key for CI service account
-#                     Needs: roles/aiplatform.user (for Vertex AI Evaluation)
-#   GCP_PROJECT_ID  — Your GCP project ID
+# SECRETS REQUIRED (set in GitHub → Settings → Secrets → Actions):
+#   GCP_WORKLOAD_IDENTITY_PROVIDER — WIF provider path (from setup_wif.sh)
+#   GCP_SERVICE_ACCOUNT            — SA email (no JSON key needed!)
+#   GCP_PROJECT_ID                 — Your GCP project ID
 # =============================================================================
 
 name: "CI — Agent Quality Gate"
