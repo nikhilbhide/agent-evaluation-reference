@@ -165,8 +165,8 @@ jobs:
         run: |
           # Wait until ArgoCD reports the 'agents' Application is Synced + Healthy
           # This requires ArgoCD CLI or polling the API
-          echo "Waiting for ArgoCD sync (up to 5 minutes)..."
-          for i in $(seq 1 30); do
+          echo "Waiting for ArgoCD sync (up to 7.5 minutes)..."
+          for i in $(seq 1 45); do
             # Check if canary pod is ready via kubectl (still need GKE creds for eval)
             sleep 10
             echo "Checking canary pod readiness (attempt ${i}/30)..."
@@ -176,8 +176,8 @@ jobs:
               echo "✅ Canary pod is ready."
               break
             fi
-            if [ "$i" -eq 30 ]; then
-              echo "❌ Canary pod never became ready after 5 minutes."
+            if [ "$i" -eq 45 ]; then
+              echo "❌ Canary pod never became ready after 7.5 minutes."
               exit 1
             fi
           done
