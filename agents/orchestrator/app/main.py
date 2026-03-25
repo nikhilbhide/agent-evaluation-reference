@@ -94,17 +94,36 @@ _model: GenerativeModel = None
 _ready: bool = False
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+def _init_model():
+    """Lazy initialization of Vertex AI model (called on first request)."""
     global _model, _ready
+    if _model is not None:
+        return  # Already initialized
+
+    if not GCP_PROJECT:
+        logger.error("GCP_PROJECT environment variable not set. Cannot initialize Vertex AI.")
+        return
+
     try:
+        logger.info(f"Initializing Vertex AI SDK (project={GCP_PROJECT}, location={GCP_LOCATION})")
         vertexai.init(project=GCP_PROJECT, location=GCP_LOCATION)
+        logger.info(f"Loading model: {MODEL_NAME}")
         _model = GenerativeModel(MODEL_NAME, system_instruction=[SYSTEM_INSTRUCTION])
         _ready = True
         logger.info(f"Orchestrator ready — version={APP_VERSION}")
     except Exception as e:
-        logger.error(f"Orchestrator startup failed: {e}")
+        logger.error(f"Model initialization failed: {e}", exc_info=True)
+        _ready = False
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan handler - app is ready immediately, model loads on first request."""
+    global _ready
+    logger.info(f"Orchestrator starting — version={APP_VERSION}")
+    _ready = True  # App is running, model will load on demand
     yield
+    logger.info("Orchestrator shutting down")
 
 
 app = FastAPI(title="Orchestrator Agent", version=APP_VERSION, lifespan=lifespan)
@@ -126,6 +145,11 @@ class PredictResponse(BaseModel):
 async def predict(req: PredictRequest):
     if not _ready:
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
+
+    # Initialize model on first request (lazy loading)
+    _init_model()
+    if _model is None:
+        raise HTTPException(status_code=503, detail="Model failed to initialize")
 
     t0 = time.perf_counter()
 
