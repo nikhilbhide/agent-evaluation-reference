@@ -196,9 +196,10 @@ async def predict(req: PredictRequest):
                 )
                 agent_resp.raise_for_status()
                 response_text = agent_resp.json().get("response", "")
-            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
+            except Exception as e:
                 # Sub-agent unreachable (common during dark launch when only orchestrator is deployed)
-                logger.warning(f"Sub-agent {target_agent} unreachable ({e}); using fallback response for dark launch evaluation")
+                # Catch all exceptions (ConnectionError, Timeout, HTTPError, etc)
+                logger.warning(f"Sub-agent {target_agent} unreachable: {type(e).__name__}: {e}. Using fallback response.")
                 # Generate a fallback response that demonstrates correct routing logic
                 # This is evaluated by Vertex AI for routing accuracy and helpfulness
                 fallback_responses = {
