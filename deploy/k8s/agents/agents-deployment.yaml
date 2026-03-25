@@ -21,7 +21,7 @@ spec:
       serviceAccountName: agent-workload-sa
       containers:
         - name: billing-agent
-          image: us-docker.pkg.dev/hr-policy-agent-486811/gcr.io/billing-agent:latest
+          image: us-docker.pkg.dev/hr-policy-agent-486811/gcr.io/billing-agent:STABLE_TAG
           ports:
             - containerPort: 8080
           env:
@@ -66,7 +66,7 @@ spec:
       serviceAccountName: agent-workload-sa
       containers:
         - name: technical-agent
-          image: us-docker.pkg.dev/hr-policy-agent-486811/gcr.io/technical-agent:latest
+          image: us-docker.pkg.dev/hr-policy-agent-486811/gcr.io/technical-agent:STABLE_TAG
           ports:
             - containerPort: 8080
           env:
@@ -111,7 +111,7 @@ spec:
       serviceAccountName: agent-workload-sa
       containers:
         - name: account-agent
-          image: us-docker.pkg.dev/hr-policy-agent-486811/gcr.io/account-agent:latest
+          image: us-docker.pkg.dev/hr-policy-agent-486811/gcr.io/account-agent:STABLE_TAG
           ports:
             - containerPort: 8080
           env:

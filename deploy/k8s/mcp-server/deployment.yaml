@@ -41,7 +41,7 @@ spec:
       serviceAccountName: agent-workload-sa
       containers:
         - name: mcp-server
-          image: us-docker.pkg.dev/hr-policy-agent-486811/gcr.io/mcp-server:latest
+          image: us-docker.pkg.dev/hr-policy-agent-486811/gcr.io/mcp-server:STABLE_TAG
           ports:
             - containerPort: 8080
           env:
