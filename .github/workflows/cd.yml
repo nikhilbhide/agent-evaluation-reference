@@ -161,13 +161,26 @@ jobs:
           echo "✅ Image tag committed. ArgoCD will sync within ~3 minutes."
           echo "   Monitor sync: kubectl get app agents -n argocd -w"
 
+      # Authenticate to GCP BEFORE checking pod readiness
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ secrets.GKE_CLUSTER_NAME }}
+          location: ${{ secrets.GKE_CLUSTER_ZONE }}
+
       - name: "Wait for ArgoCD to sync canary"
         run: |
           # Wait until ArgoCD reports the 'agents' Application is Synced + Healthy
           # This requires ArgoCD CLI or polling the API
           echo "Waiting for ArgoCD sync (up to 7.5 minutes)..."
           for i in $(seq 1 45); do
-            # Check if canary pod is ready via kubectl (still need GKE creds for eval)
+            # Check if canary pod is ready via kubectl (kubectl credentials now available)
             sleep 10
             echo "Checking canary pod readiness (attempt ${i}/30)..."
             READY=$(kubectl get pods -n agent -l version=canary \
@@ -181,19 +194,6 @@ jobs:
               exit 1
             fi
           done
-
-      # Port-forward canary for evaluation
-      - name: Authenticate to GCP via WIF
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      - name: Get GKE credentials
-        uses: google-github-actions/get-gke-credentials@v2
-        with:
-          cluster_name: ${{ secrets.GKE_CLUSTER_NAME }}
-          location: ${{ secrets.GKE_CLUSTER_ZONE }}
 
       - name: "Port-forward canary service for evaluation"
         run: |
