@@ -26,10 +26,11 @@ spec:
             - containerPort: 8080
           env:
             - name: GCP_PROJECT
-              valueFrom:
-                secretKeyRef:
-                  name: agent-config
-                  key: gcp_project
+              value: "hr-policy-agent-486811"
+            - name: GCP_LOCATION
+              value: "us-central1"
+            - name: MODEL_NAME
+              value: "gemini-2.5-flash"
             - name: MCP_SERVER_URL
               value: "http://mcp-server.agent.svc.cluster.local"
 ---
@@ -70,10 +71,11 @@ spec:
             - containerPort: 8080
           env:
             - name: GCP_PROJECT
-              valueFrom:
-                secretKeyRef:
-                  name: agent-config
-                  key: gcp_project
+              value: "hr-policy-agent-486811"
+            - name: GCP_LOCATION
+              value: "us-central1"
+            - name: MODEL_NAME
+              value: "gemini-2.5-flash"
             - name: MCP_SERVER_URL
               value: "http://mcp-server.agent.svc.cluster.local"
 ---
@@ -114,10 +116,11 @@ spec:
             - containerPort: 8080
           env:
             - name: GCP_PROJECT
-              valueFrom:
-                secretKeyRef:
-                  name: agent-config
-                  key: gcp_project
+              value: "hr-policy-agent-486811"
+            - name: GCP_LOCATION
+              value: "us-central1"
+            - name: MODEL_NAME
+              value: "gemini-2.5-flash"
             - name: MCP_SERVER_URL
               value: "http://mcp-server.agent.svc.cluster.local"
 ---

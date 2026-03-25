@@ -46,10 +46,9 @@ spec:
             - containerPort: 8080
           env:
             - name: GCP_PROJECT
-              valueFrom:
-                secretKeyRef:
-                  name: agent-config
-                  key: gcp_project
+              value: "hr-policy-agent-486811"
+            - name: GCP_LOCATION
+              value: "us-central1"
           resources:
             requests:
               cpu: "250m"
