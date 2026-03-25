@@ -70,8 +70,9 @@ echo "✅ Canary pod label added. Main Service will now route to it."
 # ── Step 2: Wait for pod to restart with new label ──────────────────────────
 echo ""
 echo "[2/3] Waiting for canary pod to restart and become ready..."
+# Increased timeout to 5 minutes to account for rolling update delays
 kubectl rollout status deployment/"${CANARY_DEPLOY}" \
-  -n "${NAMESPACE}" --timeout=2m
+  -n "${NAMESPACE}" --timeout=5m
 echo "✅ Canary pod is ready and receiving traffic."
 
 # ── Step 3: Scale stable to get 20% split ─────────────────────────────────
