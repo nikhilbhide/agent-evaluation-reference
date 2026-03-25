@@ -327,6 +327,8 @@ jobs:
 
           ArgoCD will perform zero-downtime rolling update.
           [skip ci]"
+          # Pull and rebase in case remote has changes from other runs
+          git pull origin main --rebase
           git push origin main
 
           echo "====================================================="
