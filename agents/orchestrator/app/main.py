@@ -168,7 +168,7 @@ async def predict(req: PredictRequest):
                 agent_resp = requests.post(
                     f"{agent_url}/predict",
                     json={"prompt": req.prompt},
-                    timeout=5,
+                    timeout=10,
                 )
                 agent_resp.raise_for_status()
                 response_text = agent_resp.json().get("response", "")
