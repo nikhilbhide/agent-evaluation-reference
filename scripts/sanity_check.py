@@ -54,7 +54,9 @@ def check(name: str, passed: bool, detail: str = ""):
     return passed
 
 
-def run_sanity_check(endpoint: str, expected_version: str | None, latency_threshold_ms: float) -> bool:
+from typing import Optional
+
+def run_sanity_check(endpoint: str, expected_version: Optional[str], latency_threshold_ms: float) -> bool:
     """
     Runs all sanity checks against the given endpoint.
     Returns True if all checks pass, False otherwise.
@@ -89,12 +91,11 @@ def run_sanity_check(endpoint: str, expected_version: str | None, latency_thresh
             if version_ok:
                 results.append(check("Version match (/version)", True, f"version={actual_version}"))
             else:
-                # Log as warning but don't count as a failure - the real test is /predict
-                logger.warning(
+                results.append(check("Version match (/version)", False, f"expected={expected_version} got={actual_version}"))
+                logger.error(
                     f"Version mismatch: expected={expected_version} got={actual_version}. "
-                    f"This is normal during rolling updates. The /predict endpoint is what matters."
+                    f"Aborting as we may be targeting the wrong pod."
                 )
-                results.append(check("Version match (/version)", True, f"warning: expected={expected_version} got={actual_version}"))
         except Exception as e:
             results.append(check("Version match (/version)", False, str(e)))
     else:

@@ -53,8 +53,17 @@ sanity:  ## Run sanity check against AGENT_ENDPOINT (set in .env)
 
 ## ── Docker ───────────────────────────────────────────────────────────────────
 
-.PHONY: docker-build
-docker-build:  ## Build the agent Docker image locally
+.PHONY: deploy-adk
+deploy-adk:  ## Deploy the ADK agent to Vertex AI Agent Engine
+	@test -n "$(PROJECT_ID)" || (echo "❌ Set PROJECT_ID" && exit 1)
+	@test -n "$(STAGING_BUCKET)" || (echo "❌ Set STAGING_BUCKET" && exit 1)
+	$(PYTHON) scripts/deploy_agent_engine.py
+
+.PHONY: run-adk-local
+run-adk-local:  ## Run the ADK orchestrator locally
+	export GCP_PROJECT=$(GOOGLE_CLOUD_PROJECT) && \
+	export MCP_SERVER_URL=http://localhost:8081 && \
+	$(PYTHON) agents/orchestrator/app/main_adk.py
 	docker build \
 		--build-arg APP_VERSION=local-dev \
 		-t customer-resolution-agent:local .

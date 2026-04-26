@@ -2,7 +2,9 @@
 from datetime import datetime
 
 
-def issue_refund(invoice_id: str, reason: str, amount: float | None = None) -> dict:
+from typing import Optional
+
+def issue_refund(invoice_id: str, reason: str, amount: Optional[float] = None) -> dict:
     """
     Issues a refund for an invoice.
     In production this calls your billing microservice / Stripe API / etc.

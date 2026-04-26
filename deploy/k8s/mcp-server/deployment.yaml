@@ -41,12 +41,12 @@ spec:
       serviceAccountName: agent-workload-sa
       containers:
         - name: mcp-server
-          image: us-docker.pkg.dev/hr-policy-agent-486811/gcr.io/mcp-server:0a36a8c
+          image: us-docker.pkg.dev/YOUR_PROJECT_ID/gcr.io/mcp-server:latest
           ports:
             - containerPort: 8080
           env:
             - name: GCP_PROJECT
-              value: "hr-policy-agent-486811"
+              value: "YOUR_PROJECT_ID"
             - name: GCP_LOCATION
               value: "us-central1"
           resources:

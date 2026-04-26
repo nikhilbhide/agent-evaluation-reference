@@ -1,6 +1,8 @@
 import json
+import time
 import pandas as pd
 from typing import Optional
+from google.cloud import monitoring_v3
 from vertexai.preview.evaluation import EvalTask
 from agent_eval.agent.core import init_agent, run_customer_resolution_agent
 from agent_eval.agent.endpoint import run_agent_via_endpoint
@@ -11,6 +13,41 @@ logger = get_logger(__name__)
 
 # Default quality gate thresholds
 DEFAULT_SAFETY_THRESHOLD = 0.9
+
+def log_eval_metrics_to_cloud_monitoring(project_id: str, summary: dict):
+    """Logs evaluation summary metrics to Google Cloud Monitoring."""
+    client = monitoring_v3.MetricServiceClient()
+    project_name = f"projects/{project_id}"
+
+    series = []
+    timestamp = time.time()
+    seconds = int(timestamp)
+    nanos = int((timestamp - seconds) * 10**9)
+    interval = monitoring_v3.TimeInterval(
+        end_time={"seconds": seconds, "nanos": nanos}
+    )
+
+    for metric_name, value in summary.items():
+        if isinstance(value, (int, float)):
+            # Clean up metric name for GCP (only alpha-numeric and underscores)
+            clean_name = metric_name.replace("/", "_").replace(".", "_")
+            
+            point = monitoring_v3.Point(
+                interval=interval,
+                value={"double_value": float(value)}
+            )
+            series.append(monitoring_v3.TimeSeries(
+                metric={"type": f"custom.googleapis.com/agent/evaluation/{clean_name}"},
+                resource={"type": "global"},
+                points=[point]
+            ))
+
+    if series:
+        try:
+            client.create_time_series(name=project_name, time_series=series)
+            logger.info(f"✅ Logged {len(series)} metrics to Cloud Monitoring")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to log metrics to Cloud Monitoring: {e}")
 
 def evaluate_agent(
     project_id: str,
@@ -52,9 +89,13 @@ def evaluate_agent(
     if endpoint_url:
         logger.info(f"[CD MODE] Calling live deployed agent at: {endpoint_url}")
         logger.info("All real tools, sub-agents, and RAG components are exercised through this endpoint.")
-        df["response"] = df["prompt"].apply(
-            lambda p: run_agent_via_endpoint(p, endpoint_url)
-        )
+        
+        responses = []
+        for _, row in df.iterrows():
+            session_id = row.get("session_id", "eval-session")
+            resp = run_agent_via_endpoint(row["prompt"], endpoint_url, session_id=session_id)
+            responses.append(resp)
+        df["response"] = responses
     else:
         logger.info("[CI MODE] Using local mock agent (no real dependencies).")
         df["response"] = df["prompt"].apply(run_customer_resolution_agent)
@@ -88,6 +129,9 @@ def evaluate_agent(
         logger.info(f"Average Fulfillment Score: {summary.get('fulfillment', 'N/A')}")
         logger.info(f"Average CUSTOM Resolution Score: {summary.get('pointwise_metric_score', 'N/A')}")
         
+        # Log to Cloud Monitoring for historical dashboarding
+        log_eval_metrics_to_cloud_monitoring(project_id, summary)
+
         logger.info("Detailed DataFrame metrics preview:")
         pd.set_option('display.max_columns', None)
         cols = result.metrics_table.columns.tolist()

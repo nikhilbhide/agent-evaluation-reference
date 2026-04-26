@@ -13,13 +13,13 @@ from agent_eval.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def run_agent_via_endpoint(prompt: str, endpoint_url: str, timeout: int = 30) -> str:
+def run_agent_via_endpoint(prompt: str, endpoint_url: str, session_id: str = "default-session", timeout: int = 30) -> str:
     """
     Calls a live deployed agent endpoint and returns its response text.
     
     Expected request format  (adjust to match your agent's API schema):
         POST {endpoint_url}
-        {"prompt": "<user message>"}
+        {"prompt": "<user message>", "session_id": "<uuid>"}
     
     Expected response format:
         {"response": "<agent reply>"}
@@ -27,17 +27,18 @@ def run_agent_via_endpoint(prompt: str, endpoint_url: str, timeout: int = 30) ->
     Args:
         prompt: The user query to send.
         endpoint_url: Full URL of the deployed agent (staging or canary).
+        session_id: Session ID for maintaining conversation context.
         timeout: Request timeout in seconds.
     
     Returns:
         The agent's text response, or an error string if the call fails.
     """
     predict_url = f"{endpoint_url.rstrip('/')}/predict"
-    logger.info(f"Calling live agent endpoint: {predict_url}")
+    logger.info(f"Calling live agent endpoint: {predict_url} (session={session_id})")
     try:
         resp = requests.post(
             predict_url,
-            json={"prompt": prompt},
+            json={"prompt": prompt, "session_id": session_id},
             timeout=timeout,
             headers={"Content-Type": "application/json"},
         )

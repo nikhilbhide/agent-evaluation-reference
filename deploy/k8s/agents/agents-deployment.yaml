@@ -21,12 +21,12 @@ spec:
       serviceAccountName: agent-workload-sa
       containers:
         - name: billing-agent
-          image: us-docker.pkg.dev/hr-policy-agent-486811/gcr.io/billing-agent:0a36a8c
+          image: us-docker.pkg.dev/YOUR_PROJECT_ID/gcr.io/billing-agent:0a36a8c
           ports:
             - containerPort: 8080
           env:
             - name: GCP_PROJECT
-              value: "hr-policy-agent-486811"
+              value: "YOUR_PROJECT_ID"
             - name: GCP_LOCATION
               value: "us-central1"
             - name: MODEL_NAME
@@ -66,12 +66,12 @@ spec:
       serviceAccountName: agent-workload-sa
       containers:
         - name: technical-agent
-          image: us-docker.pkg.dev/hr-policy-agent-486811/gcr.io/technical-agent:0a36a8c
+          image: us-docker.pkg.dev/YOUR_PROJECT_ID/gcr.io/technical-agent:0a36a8c
           ports:
             - containerPort: 8080
           env:
             - name: GCP_PROJECT
-              value: "hr-policy-agent-486811"
+              value: "YOUR_PROJECT_ID"
             - name: GCP_LOCATION
               value: "us-central1"
             - name: MODEL_NAME
@@ -111,12 +111,12 @@ spec:
       serviceAccountName: agent-workload-sa
       containers:
         - name: account-agent
-          image: us-docker.pkg.dev/hr-policy-agent-486811/gcr.io/account-agent:0a36a8c
+          image: us-docker.pkg.dev/YOUR_PROJECT_ID/gcr.io/account-agent:0a36a8c
           ports:
             - containerPort: 8080
           env:
             - name: GCP_PROJECT
-              value: "hr-policy-agent-486811"
+              value: "YOUR_PROJECT_ID"
             - name: GCP_LOCATION
               value: "us-central1"
             - name: MODEL_NAME

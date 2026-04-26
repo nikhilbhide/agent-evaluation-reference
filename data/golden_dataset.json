@@ -74,5 +74,16 @@
       "expected_tools": ["lookup_invoice", "issue_refund"],
       "category": "billing"
     }
+  },
+  {
+    "prompt": "Wait, I just checked and I have another one from last month too, INV-12344. Can you refund that one as well?",
+    "reference": "I've located invoice INV-12344 as well. I've issued a second refund for $149.99 (Refund ID: REF-INV-12344). Both refunds should appear on your statement in 3-5 business days. Is there anything else I can help with?",
+    "session_id": "test-session-multi-turn",
+    "_meta": {
+      "expected_route": "billing_agent",
+      "expected_tools": ["lookup_invoice", "issue_refund"],
+      "category": "billing",
+      "is_multi_turn": true
+    }
   }
 ]

@@ -9,7 +9,11 @@ description = "Production grade GCP Agent Evaluation"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
+    "google-adk",
     "google-cloud-aiplatform[evaluation]>=1.60.0",
+    "google-cloud-securitycenter",
+    "google-cloud-monitoring",
+    "google-cloud-bigquery",
     "pandas>=2.0.0",
     "google-cloud-storage>=2.10.0",
     "google-auth>=2.20.0",

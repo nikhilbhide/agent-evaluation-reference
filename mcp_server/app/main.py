@@ -27,7 +27,7 @@ TOOL CALL FLOW (how an agent uses this):
 import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Any
+from typing import Any, Optional
 
 from app.tools.billing import issue_refund, lookup_invoice
 from app.tools.account import lookup_account, lookup_transaction
@@ -114,7 +114,7 @@ class ToolCallRequest(BaseModel):
 class ToolCallResponse(BaseModel):
     name: str
     result: Any
-    error: str | None = None
+    error: Optional[str] = None
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────

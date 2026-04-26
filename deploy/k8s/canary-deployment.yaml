@@ -45,12 +45,12 @@ spec:
       serviceAccountName: agent-workload-sa
       containers:
         - name: orchestrator
-          image: us-docker.pkg.dev/hr-policy-agent-486811/gcr.io/orchestrator:0a36a8c
+          image: us-docker.pkg.dev/YOUR_PROJECT_ID/gcr.io/orchestrator:0a36a8c
           ports:
             - containerPort: 8080
           env:
             - name: GCP_PROJECT
-              value: "hr-policy-agent-486811"
+              value: "YOUR_PROJECT_ID"
             - name: GCP_LOCATION
               value: "us-central1"
             - name: MODEL_NAME

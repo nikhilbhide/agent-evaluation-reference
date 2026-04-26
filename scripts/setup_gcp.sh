@@ -46,8 +46,24 @@ gcloud services enable \
   artifactregistry.googleapis.com \
   cloudbuild.googleapis.com \
   iamcredentials.googleapis.com \
+  storage.googleapis.com \
+  \
   --project="${PROJECT_ID}"
 echo "✅ APIs enabled."
+
+# ── Step 1.5: Create Staging Bucket ───────────────────────────────────────────
+echo ""
+echo "[1.5/8] Creating GCS staging bucket..."
+STAGING_BUCKET="agent-eval-staging-${PROJECT_ID}"
+if ! gcloud storage buckets describe "gs://${STAGING_BUCKET}" --project="${PROJECT_ID}" &>/dev/null; then
+  gcloud storage buckets create "gs://${STAGING_BUCKET}" \
+    --location="${REGION}" \
+    --project="${PROJECT_ID}" \
+    --uniform-bucket-level-access
+  echo "✅ Bucket gs://${STAGING_BUCKET} created."
+else
+  echo "✅ Bucket gs://${STAGING_BUCKET} already exists."
+fi
 
 # ── Step 2: Create GKE Autopilot cluster ──────────────────────────────────────
 # Using Autopilot: no node pool management needed, Workload Identity enabled by default.
@@ -89,13 +105,37 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --role="roles/artifactregistry.admin" \
   --quiet
 
-# Storage Admin — needed for legacy gcr.io bucket operations
+# Storage Admin — needed for legacy gcr.io bucket operations and staging
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${GSA_EMAIL}" \
   --role="roles/storage.admin" \
   --quiet
 
-echo "✅ IAM roles granted (aiplatform.user, artifactregistry.admin, storage.admin)."
+# Reasoning Engine Admin — needed to deploy agents to Agent Engine
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${GSA_EMAIL}" \
+  --role="roles/aiplatform.admin" \
+  --quiet
+
+echo "✅ IAM roles granted (aiplatform.admin, artifactregistry.admin, storage.admin)."
+
+# Grant Storage Object Viewer to Vertex AI Service Agents (for Reasoning Engine deployment)
+PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)")
+AI_PLATFORM_SA="service-${PROJECT_NUMBER}@gcp-sa-aiplatform.iam.gserviceaccount.com"
+REASONING_ENGINE_SA="service-${PROJECT_NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
+
+echo "Granting storage permissions to Vertex AI service agents..."
+gcloud storage buckets add-iam-policy-binding "gs://${STAGING_BUCKET}" \
+  --member="serviceAccount:${AI_PLATFORM_SA}" \
+  --role="roles/storage.objectViewer" \
+  --project="${PROJECT_ID}" --quiet || true
+
+gcloud storage buckets add-iam-policy-binding "gs://${STAGING_BUCKET}" \
+  --member="serviceAccount:${REASONING_ENGINE_SA}" \
+  --role="roles/storage.objectViewer" \
+  --project="${PROJECT_ID}" --quiet || true
+
+echo "✅ Service agent permissions granted."
 
 # ── Step 5: Create gcr.io Artifact Registry repository ──────────────────────
 # In newer GCP projects, gcr.io is routed through Artifact Registry.
