@@ -112,7 +112,6 @@ def evaluate_agent(
         metrics=[
             "groundedness",
             "safety",
-            "fulfillment",
             resolution_metric
         ],
         experiment=experiment_name

@@ -8,11 +8,11 @@ from agents.account_agent.app.agent import account_agent
 # Enterprise Governance:
 #   - Model Armor: Configured via Vertex AI to handle Jailbreak/PII filtering.
 #   - Agent Identity: Uses a dedicated GSA (agent-orchestrator@).
-#   - Agent Registry: Specialists are looked up via the registry in production.
+#   - Memory Bank: Enables multi-turn session persistence.
 
 orchestrator_agent = Agent(
-    name="orchestrator",
-    model="gemini-1.5-pro",
+    name="customer_resolution_orchestrator",
+    model="gemini-2.5-pro",
     instruction="""
     You are the Orchestrator for TechCorp's Customer Resolution Hub.
     Your job is to listen to the user and delegate to the correct specialist agent.

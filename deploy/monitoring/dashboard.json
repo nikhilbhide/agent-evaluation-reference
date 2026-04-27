@@ -1,82 +1,81 @@
 {
   "displayName": "Agentic Platform - Customer Resolution Hub",
-  "dashboardFilters": [],
-  "widgets": [
-    {
-      "title": "Agent Latency (p99)",
-      "xyChart": {
-        "dataSets": [
-          {
-            "timeSeriesQuery": {
-              "timeSeriesFilter": {
-                "filter": "metric.type=\"aiplatform.googleapis.com/prediction/latency\" resource.type=\"aiplatform.googleapis.com/ReasoningEngine\"",
-                "aggregation": {
-                  "perSeriesAligner": "ALIGN_PERCENTILE_99",
-                  "alignmentPeriod": "60s"
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
+      {
+        "height": 4,
+        "widget": {
+          "title": "Agent Latency (p99)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_PERCENTILE_99"
+                    },
+                    "filter": "metric.type=\"aiplatform.googleapis.com/prediction/latency\" resource.type=\"aiplatform.googleapis.com/ReasoningEngine\""
+                  }
                 }
               }
-            },
-            "plotType": "LINE"
+            ]
           }
-        ]
-      }
-    },
-    {
-      "title": "Tool Execution Success Rate",
-      "xyChart": {
-        "dataSets": [
-          {
-            "timeSeriesQuery": {
-              "timeSeriesFilter": {
-                "filter": "metric.type=\"aiplatform.googleapis.com/agent/tool_use_count\" resource.type=\"aiplatform.googleapis.com/ReasoningEngine\" metric.label.status=\"success\"",
-                "aggregation": {
-                  "perSeriesAligner": "ALIGN_RATE",
-                  "alignmentPeriod": "60s"
+        },
+        "width": 6,
+        "yPos": 0
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Tool Execution Rate",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "STACKED_AREA",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"aiplatform.googleapis.com/agent/tool_use_count\" resource.type=\"aiplatform.googleapis.com/ReasoningEngine\""
+                  }
                 }
               }
-            },
-            "plotType": "STACKED_AREA"
+            ]
           }
-        ]
-      }
-    },
-    {
-      "title": "Model Armor Security Blocks",
-      "xyChart": {
-        "dataSets": [
-          {
-            "timeSeriesQuery": {
-              "timeSeriesFilter": {
-                "filter": "metric.type=\"aiplatform.googleapis.com/security/model_armor_blocks\" resource.type=\"aiplatform.googleapis.com/ReasoningEngine\"",
-                "aggregation": {
-                  "perSeriesAligner": "ALIGN_COUNT",
-                  "alignmentPeriod": "60s"
+        },
+        "width": 6,
+        "xPos": 6,
+        "yPos": 0
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Agent Fulfillment Score (Vertex AI Eval)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "metric.type=\"custom.googleapis.com/agent/evaluation/fulfillment_score\" resource.type=\"global\""
+                  }
                 }
               }
-            },
-            "plotType": "BAR"
+            ]
           }
-        ]
+        },
+        "width": 12,
+        "yPos": 4
       }
-    },
-    {
-      "title": "Agent Fulfillment Score (Vertex AI Eval)",
-      "xyChart": {
-        "dataSets": [
-          {
-            "timeSeriesQuery": {
-              "timeSeriesFilter": {
-                "filter": "metric.type=\"custom.googleapis.com/agent/evaluation/fulfillment_score\" resource.type=\"global\"",
-                "aggregation": {
-                  "perSeriesAligner": "ALIGN_MEAN",
-                  "alignmentPeriod": "3600s"
-                }
-              }
-            },
-            "plotType": "LINE"
-          }
-        ]
-      }
-    }
-  ]
+    ]
+  }
 }

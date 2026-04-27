@@ -1,0 +1,22 @@
+[
+  {
+    "prompt": "I was charged twice for my subscription this month. I can see two charges of $149.99 on my credit card statement.",
+    "reference": "I apologize for the inconvenience. I've looked up your account and can confirm you were accidentally charged twice. I have issued a refund of $149.99 for the duplicate charge. You should see it back on your statement in 3-5 business days. Refund ID: REF-12345.",
+    "session_id": "pilot-billing-1",
+    "_meta": {
+      "expected_route": "billing_agent",
+      "expected_tools": ["lookup_invoice", "issue_refund"],
+      "category": "billing"
+    }
+  },
+  {
+    "prompt": "Can you show me my last invoice? I need it for my tax records.",
+    "reference": "Certainly. I've retrieved your last invoice (INV-98765) for $149.99 dated April 1st. You can download the PDF from your account dashboard or I can email it to you.",
+    "session_id": "pilot-billing-2",
+    "_meta": {
+      "expected_route": "billing_agent",
+      "expected_tools": ["lookup_invoice"],
+      "category": "billing"
+    }
+  }
+]

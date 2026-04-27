@@ -3,73 +3,82 @@ import asyncio
 import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from google.adk.runtime import Runner
-from google.adk.services.memory import VertexAiMemoryBankService
+from google.adk.runners import Runner
+from google.adk.memory import VertexAiMemoryBankService
+from google.adk.sessions import InMemorySessionService
 from agents.orchestrator.app.agent import orchestrator_agent
 
 # ── Setup Logging ─────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-# ── Configuration ─────────────────────────────────────────────────────────────
-GCP_PROJECT = os.environ.get("GCP_PROJECT", "")
-GCP_LOCATION = os.environ.get("GCP_LOCATION", "us-central1")
-MEMORY_INDEX_ID = os.environ.get("MEMORY_INDEX_ID", "default-index")
+app = FastAPI(title="ADK Agent Gateway", version="1.0.0")
 
-# ── Initialize ADK Components ─────────────────────────────────────────────────
-# Memory Bank Service handles long-term fact persistence
-memory_service = None
-if GCP_PROJECT:
+# ── Global ADK Runner ──────────────────────────────────────────────────────────
+runner = None
+
+def init_runner():
+    global runner
+    project = os.environ.get("GCP_PROJECT")
+    location = os.environ.get("GCP_LOCATION", "us-central1")
+    
+    logger.info(f"🚀 Initializing ADK Runner (project={project}, location={location})")
+    
     try:
-        memory_service = VertexAiMemoryBankService(
-            project_id=GCP_PROJECT,
-            location=GCP_LOCATION,
-            index_id=MEMORY_INDEX_ID
-        )
-        logger.info(f"Memory Bank initialized: {MEMORY_INDEX_ID}")
-    except Exception as e:
-        logger.warning(f"Could not initialize Memory Bank: {e}. Running without memory.")
-
-# Runner orchestrates the agent + memory interaction
-runner = Runner(
-    agent=orchestrator_agent,
-    memory_service=memory_service
-)
-
-# ── FastAPI Wrapper ───────────────────────────────────────────────────────────
-app = FastAPI(title="ADK Orchestrator Service")
-
-class PredictRequest(BaseModel):
-    prompt: str
-    session_id: str = "default-session"
-    user_id: str = "default-user"
-
-class PredictResponse(BaseModel):
-    response: str
-    session_id: str
-
-@app.post("/predict")
-async def predict(req: PredictRequest):
-    try:
-        # 1. Query the agent via ADK Runner
-        # This handles PreloadMemoryTool automatically if configured in the agent
-        response = await runner.query(
-            req.prompt,
-            session_id=req.session_id,
-            user_id=req.user_id
+        # Initialize Memory Bank for RAG (if needed)
+        memory_bank = VertexAiMemoryBankService(
+            project=project,
+            location=location
         )
         
-        # 2. Extract facts and save to memory bank at the end of the turn
-        # In a real high-traffic app, you might do this background/async
-        if memory_service:
-            await memory_service.add_session_to_memory(session_id=req.session_id)
-            
-        return PredictResponse(
-            response=response.text,
+        # Initialize the Runner with the orchestrator agent
+        runner = Runner(
+            agent=orchestrator_agent,
+            app_name="CustomerResolutionHub",
+            session_service=InMemorySessionService(),
+            memory_service=memory_bank
+        )
+        logger.info("✅ ADK Runner initialized successfully.")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize ADK Runner: {e}")
+        # Fallback to runner without memory if initialization fails
+        runner = Runner(
+            agent=orchestrator_agent,
+            app_name="CustomerResolutionHub",
+            session_service=InMemorySessionService()
+        )
+
+@app.on_event("startup")
+async def startup_event():
+    init_runner()
+
+# ── API Models ────────────────────────────────────────────────────────────────
+class QueryRequest(BaseModel):
+    prompt: str
+    session_id: str = "default-session"
+
+class QueryResponse(BaseModel):
+    response: str
+
+# ── Endpoints ──────────────────────────────────────────────────────────────────
+@app.post("/predict", response_model=QueryResponse)
+async def predict(req: QueryRequest):
+    if not runner:
+        raise HTTPException(status_code=500, detail="ADK Runner not initialized")
+
+    logger.info(f"📥 Received query: {req.prompt[:50]}... (session={req.session_id})")
+    
+    try:
+        result = await asyncio.to_thread(
+            runner.run,
+            input=req.prompt,
             session_id=req.session_id
         )
+        response_text = result.text if hasattr(result, "text") else str(result)
+        logger.info(f"📤 Agent response: {response_text[:50]}...")
+        return QueryResponse(response=response_text)
     except Exception as e:
-        logger.error(f"Prediction error: {e}")
+        logger.error(f"💥 Error during agent execution: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")

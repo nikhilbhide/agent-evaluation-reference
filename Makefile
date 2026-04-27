@@ -19,6 +19,26 @@ setup:  ## Create venv and install all dependencies (including dev)
 	$(PIP) install -e ".[dev]"
 	@echo "✅  Setup complete. Activate with: source $(VENV)/bin/activate"
 
+## ── Enterprise Lifecycle (Build → Scale → Govern → Optimize) ──────────────
+
+.PHONY: enterprise-deploy
+enterprise-deploy:  ## Full enterprise deployment (Build + ABOM + SCC + RE)
+	@test -n "$(PROJECT_ID)" || (echo "❌ Set PROJECT_ID" && exit 1)
+	$(PYTHON) scripts/deploy_enterprise_agent.py
+
+.PHONY: govern-setup
+govern-setup:  ## Setup SCC source, Alerting policies, and Agent Registry
+	@test -n "$(GCP_PROJECT)" || (echo "❌ Set GCP_PROJECT" && exit 1)
+	$(PYTHON) scripts/setup_alerting.py
+	$(PYTHON) scripts/publish_scc_findings.py
+	$(PYTHON) scripts/register_agents.py
+	$(PYTHON) scripts/register_tools.py
+
+.PHONY: optimize-trigger
+optimize-trigger:  ## Trigger automated model tuning based on feedback
+	@test -n "$(GCP_PROJECT)" || (echo "❌ Set GCP_PROJECT" && exit 1)
+	$(PYTHON) scripts/trigger_tuning.py
+
 ## ── Testing ──────────────────────────────────────────────────────────────────
 
 .PHONY: test
@@ -55,9 +75,14 @@ sanity:  ## Run sanity check against AGENT_ENDPOINT (set in .env)
 
 .PHONY: deploy-adk
 deploy-adk:  ## Deploy the ADK agent to Vertex AI Agent Engine
-	@test -n "$(PROJECT_ID)" || (echo "❌ Set PROJECT_ID" && exit 1)
-	@test -n "$(STAGING_BUCKET)" || (echo "❌ Set STAGING_BUCKET" && exit 1)
+	@test -n "$(GCP_PROJECT)" || (echo "❌ Set GCP_PROJECT" && exit 1)
+	@test -n "$(GCP_STAGING_BUCKET)" || (echo "❌ Set GCP_STAGING_BUCKET" && exit 1)
 	$(PYTHON) scripts/deploy_agent_engine.py
+
+.PHONY: patch-adk-labels
+patch-adk-labels:  ## Apply ADK playground labels to a deployed agent (reads deployed_agent_resource.txt if RESOURCE unset)
+	@GCP_PROJECT=$(GCP_PROJECT) GCP_LOCATION=$(GCP_LOCATION) \
+	$(PYTHON) scripts/patch_agent_labels.py $(RESOURCE)
 
 .PHONY: run-adk-local
 run-adk-local:  ## Run the ADK orchestrator locally

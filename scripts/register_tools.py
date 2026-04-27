@@ -1,36 +1,62 @@
 import os
 import sys
 import vertexai
-from vertexai.preview import reasoning_engines
-# In a real enterprise implementation, we would use the Vertex AI Tool Registry API
-# For this reference, we will simulate the registration of MCP tools
+from vertexai.preview import extensions
 
-def register_mcp_tools(project_id: str, location: str):
+def register_mcp_as_extension(project_id: str, location: str, mcp_url: str):
     """
-    Registers tools from the MCP server into the Vertex AI Tool Registry.
+    Registers the MCP server as a Vertex AI Extension.
     """
-    print(f"🛠️  Connecting to Tool Registry in {project_id}...")
+    print(f"🛠️  Registering MCP Extension in {project_id}...")
     vertexai.init(project=project_id, location=location)
 
-    # In production, this would call the MCP /mcp/tools/list endpoint
-    # and then use the google-cloud-aiplatform library to register each tool.
-    
-    mcp_tools = [
-        {"name": "lookup_invoice", "description": "Looks up details of an invoice by ID."},
-        {"name": "issue_refund", "description": "Issues a refund for a given invoice."},
-        {"name": "search_knowledge_base", "description": "Searches the internal knowledge base."}
-    ]
-
-    for tool in mcp_tools:
-        print(f"✅ Registered tool: {tool['name']} in Tool Registry")
-        # Tool Registry integration would go here:
-        # aiplatform.Tool.create(display_name=tool['name'], ...)
-    
-    print("✨ Tool Registry sync complete.")
+    # Correct schema for Vertex AI Extensions API
+    try:
+        extension = extensions.Extension.create(
+            display_name="Customer Support Toolset",
+            description="Access to billing, account, and knowledge base tools.",
+            manifest={
+                "name": "mcp_tools",
+                "description": "Enterprise customer support tools",
+                "api_spec": {
+                    "open_api_yaml": f"""
+openapi: 3.0.0
+info:
+  title: MCP Tools
+  version: 1.0.0
+servers:
+  - url: {mcp_url}
+paths:
+  /mcp/tools/call:
+    post:
+      operationId: call_tool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                arguments:
+                  type: object
+      responses:
+        '200':
+          description: OK
+"""
+                },
+                "auth_config": {"auth_type": "NO_AUTH"}
+            }
+        )
+        print(f"✅ Extension created: {extension.resource_name}")
+    except Exception as e:
+        print(f"❌ Failed to register extension: {e}")
 
 if __name__ == "__main__":
     project = os.environ.get("GCP_PROJECT")
-    if not project:
-        print("❌ GCP_PROJECT not set")
+    mcp_url = os.environ.get("MCP_SERVER_URL")
+    if not project or not mcp_url:
+        print("❌ GCP_PROJECT and MCP_SERVER_URL must be set")
         sys.exit(1)
-    register_mcp_tools(project, "us-central1")
+    register_mcp_as_extension(project, "us-central1", mcp_url)

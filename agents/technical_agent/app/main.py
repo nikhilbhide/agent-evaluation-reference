@@ -1,18 +1,14 @@
 """
 Technical Agent — handles errors, crashes, API issues via RAG-grounded responses.
 
-KEY DIFFERENCE FROM BILLING AGENT:
-  The technical agent uses the search_knowledge_base tool to retrieve
-  relevant KB documents BEFORE generating a response. This is RAG in action:
-    1. User reports a technical issue.
-    2. Agent calls search_knowledge_base("error 500 on startup").
-    3. MCP server retrieves the 3 most relevant KB articles.
-    4. Gemini uses those articles as grounding context for its answer.
-  
-  This means responses are grounded in your internal KB, not just Gemini's
-  training data. Groundedness is measured in evaluation (runner.py).
+TOOL PATTERN (Gemini → MCP server):
+  1. Receives prompt from orchestrator
+  2. Forms tool call args (e.g. search_knowledge_base + query)
+  3. Calls MCP server at /mcp/tools/call
+  4. Uses tool result to compose a helpful, accurate response
 """
 import os
+import json
 import time
 import logging
 from contextlib import asynccontextmanager
@@ -49,17 +45,22 @@ explicitly say "I don't have a KB article for this specific issue."
 """
 
 _model: GenerativeModel = None
-_tools = None
+_tools: list = None
 _ready: bool = False
 
 TECHNICAL_TOOL_NAMES = {"search_knowledge_base"}
 
 
-def _get_mcp_tools():
+def _get_mcp_tools() -> Tool:
+    """Fetch tool schemas from MCP server and convert to Gemini Tool format."""
     resp = requests.get(f"{MCP_SERVER_URL}/mcp/tools/list", timeout=5)
     resp.raise_for_status()
     declarations = [
-        FunctionDeclaration(name=t["name"], description=t["description"], parameters=t["parameters"])
+        FunctionDeclaration(
+            name=t["name"],
+            description=t["description"],
+            parameters=t["parameters"],
+        )
         for t in resp.json()["tools"]
         if t["name"] in TECHNICAL_TOOL_NAMES
     ]
@@ -67,6 +68,7 @@ def _get_mcp_tools():
 
 
 def _call_mcp_tool(name: str, arguments: dict) -> dict:
+    """Execute a tool via the MCP server."""
     resp = requests.post(
         f"{MCP_SERVER_URL}/mcp/tools/call",
         json={"name": name, "arguments": arguments},
@@ -81,6 +83,7 @@ async def lifespan(app: FastAPI):
     global _model, _tools, _ready
     try:
         vertexai.init(project=GCP_PROJECT, location=GCP_LOCATION)
+        # Fetch tool schemas from MCP server at startup
         _tools = _get_mcp_tools()
         _model = GenerativeModel(MODEL_NAME, system_instruction=[SYSTEM_INSTRUCTION])
         _ready = True
@@ -115,20 +118,24 @@ async def predict(req: PredictRequest):
     kb_docs_retrieved = 0
     chat = _model.start_chat()
 
+    # ── Agentic tool-use loop ──────────────────────────────────────────────────
     try:
         response = chat.send_message(req.prompt, tools=[_tools])
 
-        for _ in range(3):  # RAG agents rarely need more than 1-2 tool calls
+        for _ in range(5):  # max 5 tool calls per request
             function_calls = [
-                p.function_call for p in response.candidates[0].content.parts if p.function_call
+                p.function_call
+                for p in response.candidates[0].content.parts
+                if p.function_call
             ]
             if not function_calls:
                 break
 
+            # Execute each tool call via MCP server
             tool_results = []
             for fc in function_calls:
                 tools_called.append(fc.name)
-                logger.info(f"RAG tool call: {fc.name} args={dict(fc.args)}")
+                logger.info(f"Calling MCP tool: {fc.name} args={dict(fc.args)}")
                 result = _call_mcp_tool(fc.name, dict(fc.args))
 
                 # Track how many KB docs were retrieved for evaluation
@@ -136,14 +143,19 @@ async def predict(req: PredictRequest):
                     kb_docs_retrieved += result.get("result", {}).get("result_count", 0)
 
                 tool_results.append(
-                    Part.from_function_response(name=fc.name, response={"result": result})
+                    Part.from_function_response(
+                        name=fc.name,
+                        response={"result": result},
+                    )
                 )
 
+            # Feed tool results back to Gemini for the next turn
             response = chat.send_message(tool_results)
 
+        final_text = response.text
         latency_ms = (time.perf_counter() - t0) * 1000
         return PredictResponse(
-            response=response.text,
+            response=final_text,
             version=APP_VERSION,
             latency_ms=round(latency_ms, 2),
             tools_called=tools_called,
@@ -159,11 +171,13 @@ async def predict(req: PredictRequest):
 async def health():
     return {"status": "alive", "version": APP_VERSION}
 
+
 @app.get("/ready")
 async def ready():
     if not _ready:
         return JSONResponse(status_code=503, content={"status": "not_ready"})
     return {"status": "ready", "version": APP_VERSION}
+
 
 @app.get("/version")
 async def version():
