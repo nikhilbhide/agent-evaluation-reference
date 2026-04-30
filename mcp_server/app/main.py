@@ -25,10 +25,11 @@ TOOL CALL FLOW (how an agent uses this):
 """
 
 import logging
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from typing import Any, Optional
 
+from app.auth import authorize_tool, expected_principals
 from app.tools.billing import issue_refund, lookup_invoice
 from app.tools.account import lookup_account, lookup_transaction
 from app.tools.knowledge_base import search_knowledge_base
@@ -136,10 +137,16 @@ async def list_tools():
 
 
 @app.post("/mcp/tools/call", response_model=ToolCallResponse)
-async def call_tool(req: ToolCallRequest):
+async def call_tool(
+    req: ToolCallRequest,
+    authorization: Optional[str] = Header(default=None),
+):
     """
     Executes a named tool with the provided arguments.
     Called by agents when Gemini's function calling returns a tool invocation.
+
+    Authn: Cloud Run validated the bearer token before traffic reached us.
+    Authz: per-principal tool ACL gates which GSA can call which tool.
     """
     if req.name not in TOOL_REGISTRY:
         raise HTTPException(
@@ -147,18 +154,20 @@ async def call_tool(req: ToolCallRequest):
             detail=f"Tool '{req.name}' not found. Available: {list(TOOL_REGISTRY.keys())}"
         )
 
+    principal = authorize_tool(req.name, authorization=authorization)
+
     tool_fn = TOOL_REGISTRY[req.name]["fn"]
-    logger.info(f"Executing tool: {req.name} args={req.arguments}")
+    logger.info("principal=%s tool=%s args=%s", principal, req.name, req.arguments)
 
     try:
         result = tool_fn(**req.arguments)
-        logger.info(f"Tool {req.name} succeeded")
+        logger.info("principal=%s tool=%s status=ok", principal, req.name)
         return ToolCallResponse(name=req.name, result=result)
     except TypeError as e:
-        logger.error(f"Tool {req.name} called with wrong arguments: {e}")
+        logger.error("principal=%s tool=%s status=bad_args err=%s", principal, req.name, e)
         raise HTTPException(status_code=400, detail=f"Invalid arguments for tool '{req.name}': {e}")
     except Exception as e:
-        logger.error(f"Tool {req.name} execution error: {e}")
+        logger.error("principal=%s tool=%s status=error err=%s", principal, req.name, e)
         return ToolCallResponse(name=req.name, result=None, error=str(e))
 
 
@@ -169,4 +178,8 @@ async def health():
 
 @app.get("/ready")
 async def ready():
-    return {"status": "ready", "tools": list(TOOL_REGISTRY.keys())}
+    return {
+        "status": "ready",
+        "tools": list(TOOL_REGISTRY.keys()),
+        "registered_principals": list(expected_principals()),
+    }
