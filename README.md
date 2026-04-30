@@ -1,8 +1,14 @@
 # GCP Agent Evaluation — Reference Implementation
 
-A **production-grade reference** for evaluating, deploying, and continuously validating LLM-based multi-agent systems on Google Cloud Platform using GKE, Vertex AI Evaluation, and GitHub Actions.
+A **production-grade reference** for building, evaluating, governing, and continuously
+improving an LLM multi-agent system on Google Cloud — built on the **Agent Development
+Kit (ADK)**, deployed to **Vertex AI Agent Engine**, with a **Cloud Run MCP server** for
+tool execution.
 
-> **Use case:** An Intelligent Customer Resolution Hub that routes support tickets to billing, technical, and account sub-agents. The same patterns apply to any multi-agent system.
+> **Use case:** TechCorp's Customer Resolution Hub — an orchestrator routes support
+> requests to billing, technical, and account specialists. The patterns apply to any
+> multi-agent system that needs evaluation, governance, and a continuous-improvement
+> loop on GCP.
 
 ---
 
@@ -10,33 +16,55 @@ A **production-grade reference** for evaluating, deploying, and continuously val
 
 ```mermaid
 graph TD
-    subgraph CI_CD [GitHub / Cloud Build]
-        PR[PR Open] --> CI[CI Quality Gate]
-        CI --> MERGE[Merge]
-        MERGE --> BUILD[Build & Push Images]
-        BUILD --> DARK[Deploy Dark Launch<br/>0% Traffic]
-        DARK --> EVAL[CD Quality Gate<br/>Evaluate Dark Pod]
-        EVAL -->|Pass| CANARY[Enable Canary Traffic<br/>~20% Traffic]
-        EVAL -->|Fail| ROLLBACK_DARK[Abort & Rollback]
-        CANARY -->|Observe/Pass| PROMOTE[Promote to Stable]
-        CANARY -->|Fail| ROLLBACK_CANARY[Rollback Canary]
+    subgraph CLIENTS [Clients]
+        USERS((End user / Console Playground))
+        EVAL[Vertex AI Evaluation<br/>Gemini judge]
+        REDTEAM[Red-team simulation<br/>scripts/run_simulation.py]
     end
 
-    subgraph GKE [GKE Cluster]
-        USERS((Real Users)) --> SVC[Kubernetes Service<br/>LoadBalancer]
-        SVC --> STABLE[stable-deployment<br/>~80% to 100% traffic]
-        SVC -.-> CANARY_POD[canary-deployment<br/>~0% to 20% traffic]
+    subgraph AE [Vertex AI Agent Engine]
+        ORCH[Orchestrator<br/>customer-resolution-orchestrator]
+        BILL[billing-specialist]
+        ACCT[account-specialist]
+        TECH[technical-specialist]
+        ORCH -->|AgentTool| BILL
+        ORCH -->|AgentTool| ACCT
+        ORCH -->|AgentTool| TECH
     end
 
-    subgraph EVAL [Vertex AI Evaluation]
-        JUDGE[Gemini LLM-as-a-Judge<br/>Safety • Groundedness • Fulfillment]
+    subgraph MCP [Cloud Run]
+        MCPSRV[MCP Tool Server<br/>/mcp/tools/list, /mcp/tools/call]
     end
 
-    PROMOTE -.-> STABLE
-    EVAL ---> JUDGE
-    CI -.-> JUDGE
-    CANARY -.-> CANARY_POD
+    subgraph DATA [Managed services]
+        MB[(Memory Bank<br/>per-engine sessions + memories)]
+        BQ[(BigQuery<br/>agent_telemetry.agent_traces)]
+        SCC[Security Command Center<br/>ABOM findings]
+        ARMOR[Model Armor<br/>prompt injection / data exfil]
+    end
+
+    USERS --> ORCH
+    EVAL --> ORCH
+    REDTEAM --> ORCH
+
+    BILL --> MCPSRV
+    ACCT --> MCPSRV
+    TECH --> MCPSRV
+
+    ORCH <--> MB
+    BILL <--> MB
+    ACCT <--> MB
+    TECH <--> MB
+
+    ORCH -.before_model.-> ARMOR
+    ORCH -.traces.-> BQ
+    ORCH -.ABOM.-> SCC
 ```
+
+The orchestrator is a Gemini-Pro ADK agent that delegates to three Gemini-Flash
+specialists via `AgentTool`. Specialists call deterministic tools (refunds,
+account lookup, knowledge-base search) through the MCP server. All four agents
+share the orchestrator's Memory Bank so cross-agent context survives a session.
 
 ---
 
@@ -45,309 +73,287 @@ graph TD
 ```
 agent-evaluation-reference/
 │
-├── agent/                        # Deployable agent microservice
-│   ├── app/
-│   │   └── main.py               # FastAPI server: /predict /health /ready /version
-│   └── requirements.txt
+├── agents/                       # ADK agents (deployed to Agent Engine)
+│   ├── _shared/
+│   │   ├── config.py             # Models, region, display names, staging bucket
+│   │   ├── versions.py           # ADK / aiplatform / genai pinned versions
+│   │   ├── mcp_client.py         # Authenticated client → Cloud Run MCP
+│   │   └── model_armor.py        # before_model callback enforcing the template
+│   ├── orchestrator/app/         # Routes; PreloadMemoryTool + AgentTool wrappers
+│   ├── billing_agent/app/
+│   ├── account_agent/app/
+│   └── technical_agent/app/
 │
-├── deploy/k8s/                   # GKE Kubernetes manifests
-│   ├── namespace.yaml
-│   ├── stable-deployment.yaml    # Production (9 replicas, ~90% traffic)
-│   ├── canary-deployment.yaml    # Canary (1 replica, ~10% traffic) + canary Service
-│   ├── service.yaml              # Main LoadBalancer Service (selects all pods)
-│   └── hpa.yaml                  # Horizontal Pod Autoscaler for stable
+├── mcp_server/                   # Cloud Run service — tool execution layer
+│   ├── app/main.py               # FastAPI; /mcp/tools/list, /mcp/tools/call
+│   ├── app/auth.py               # OIDC token verification per agent identity
+│   └── Dockerfile
 │
-├── scripts/
-│   ├── sanity_check.py           # 7-check fast pre-eval health check
-│   └── promote_canary.sh         # Promotes canary → stable after gate passes
-│
-├── src/agent_eval/               # Evaluation framework (Python package)
+├── src/agent_eval/               # Evaluation framework (Python package, CLI)
 │   ├── agent/
-│   │   ├── core.py               # Mock agent (used in CI — no deployment needed)
-│   │   └── endpoint.py           # HTTP client for live agent (used in CD)
+│   │   ├── core.py               # CI mock agent (no deployment)
+│   │   └── endpoint.py           # Live-agent client (Reasoning Engine resource)
 │   ├── evaluation/
-│   │   ├── runner.py             # Vertex AI EvalTask orchestration + quality gate
+│   │   ├── runner.py             # Vertex AI EvalTask + safety-threshold gate
 │   │   └── metrics.py            # Custom PointwiseMetricPromptTemplate rubric
 │   └── utils/
-│       ├── config.py             # GCP project resolution
-│       └── logger.py             # Structured logging setup
+│       ├── abom.py               # Agent Bill of Materials generator
+│       ├── trace_logger.py       # BigQuery telemetry writer
+│       ├── config.py             # Project resolution helpers
+│       └── logger.py
 │
-├── data/
-│   └── golden_dataset.json       # Evaluation test cases (prompts + references)
+├── scripts/                      # Lifecycle / ops tooling
+│   ├── deploy_agent_engine.py    # Deploys orchestrator (+ wires Memory Bank)
+│   ├── register_agents.py        # Deploys all 3 specialists
+│   ├── redeploy_all.py           # Tears down + redeploys all 4 agents
+│   ├── deploy_mcp_cloud_run.sh   # Builds + deploys MCP server to Cloud Run
+│   ├── setup_enterprise_iam.sh   # Per-agent service accounts + Cloud Run IAM
+│   ├── setup_model_armor.py      # Provisions the Model Armor template
+│   ├── setup_telemetry_sink.py   # BigQuery dataset/table + log sink
+│   ├── setup_alerting.py         # Cloud Monitoring policies + log-based metrics
+│   ├── publish_scc_findings.py   # ABOM → Security Command Center finding
+│   ├── smoke_test_agents.py      # End-to-end smoke (memory persistence, tools)
+│   ├── load_test_agent_engine.py # Throughput + p95 latency probe
+│   ├── run_simulation.py         # Adversarial red-team gate (auto-graded)
+│   ├── trigger_tuning.py         # Optimize loop — BigQuery → SFT dataset → tune
+│   ├── walkthrough_report.py     # End-of-deploy summary report
+│   ├── patch_agent_labels.py     # Stamp ADK labels for Playground visibility
+│   ├── register_tools.py         # Registers MCP as a Vertex AI Extension
+│   ├── setup_wif.sh              # Workload Identity Federation for GitHub Actions
+│   └── setup_github_secrets.sh   # Bulk-set repo secrets via gh
 │
+├── data/golden_dataset.json      # Evaluation test cases (prompts + references)
 ├── tests/                        # Unit tests (mocked, no GCP calls)
-│
-├── .github/workflows/
-│   ├── ci.yml                    # CI quality gate (runs on every PR)
-│   └── cd.yml                    # CD canary deploy + quality gate (runs on merge)
-│
-├── Dockerfile                    # Multi-stage build for GKE deployment
-├── pyproject.toml                # Package config + CLI entrypoint
-└── cloudbuild.yaml               # GCP Cloud Build alternative pipeline
+├── deploy/monitoring/dashboard.json  # Cloud Monitoring dashboard definition
+├── .github/workflows/ci.yml      # CI quality gate (mock agent + Vertex judge)
+├── pyproject.toml                # Package config + agent-eval CLI entrypoint
+└── Makefile                      # Convenience targets — see `make help`
 ```
 
 ---
 
-## CI vs CD Quality Gate — Key Difference
+## The Four Lifecycle Phases
 
-| | CI Gate | CD Gate |
+The repo is organised around a four-phase agent lifecycle. Each phase has scripts
+under `scripts/` and one or more `make` targets.
+
+| Phase | What runs | Key scripts |
 |---|---|---|
-| **Triggers on** | Pull Request | Merge to `main` |
-| **Agent used** | Local mock (Gemini direct call) | Real deployed canary pod on GKE |
-| **Tools/sub-agents** | Mocked | Real (billing API, RAG, etc.) |
-| **Deployment needed** | ❌ None | ✅ Canary deployed first |
-| **Evaluation target** | Local process | `http://canary-pod:8080/predict` |
-| **Blocks** | PR merge | Traffic activation |
-| **Speed** | ~60 seconds | ~5 minutes |
-| **Cost** | Only Vertex AI judge calls | Judge calls + GKE pod |
+| **Build** | Deploy MCP, deploy four ADK agents to Agent Engine, generate ABOM, publish SCC finding | `deploy_mcp_cloud_run.sh`, `deploy_agent_engine.py`, `register_agents.py`, `publish_scc_findings.py` |
+| **Scale** | Smoke test, load test, patch ADK labels for Playground | `smoke_test_agents.py`, `load_test_agent_engine.py`, `patch_agent_labels.py` |
+| **Govern** | Telemetry sink, alerting, red-team gate, Model Armor enforcement | `setup_telemetry_sink.py`, `setup_alerting.py`, `run_simulation.py`, `setup_model_armor.py` |
+| **Optimize** | Pull weak responses from BigQuery, build SFT dataset, trigger Vertex AI tuning | `trigger_tuning.py` |
+
+Run `make help` for the full target list.
 
 ---
 
-## 3-Phase Deployment: Dark Launch & Canary Explained
+## Quality Gate — CI vs Live
 
-**The core insight:** You should never run an automated evaluation directly on pods serving live customer traffic. Instead, we use a **3-Phase Deployment Lifecycle**:
+| | CI (PR gate) | Live (post-deploy) |
+|---|---|---|
+| **Triggers on** | Pull request to `main` | Manual / scheduled / post-`deploy` |
+| **Agent target** | Local mock agent (`src/agent_eval/agent/core.py`) | Deployed Reasoning Engine resource (`AGENT_ENDPOINT=projects/.../reasoningEngines/...`) |
+| **Tools** | Mocked | Real (MCP tools, Memory Bank, Model Armor) |
+| **Cost** | Vertex AI judge calls only | Judge + live agent inference |
+| **Blocks** | PR merge | Subsequent ramp / promotion |
 
-### Phase 1: Dark Launch (0% Real Traffic)
-When the new image is first deployed to the cluster (`canary-deployment.yaml`), its Pod does **not** have the `app: customer-resolution-agent` label. Therefore, the main Kubernetes edge Service entirely ignores it. 
-*   **Real Users:** 0% of traffic hits the new code.
-*   **Evaluation Engine:** Our `agent-eval` pipeline securely accesses this "Dark Pod" through a completely separate `canary-only Service` (which uses a `version: canary` selector instead). This ensures 100% of our automated evaluation test cases hit the new version, giving us clean, deterministic scores.
-
-### Phase 2: Canary Monitoring (~20% Real Traffic)
-If the automated Quality Gate (Vertex AI) **Passes**, we execute `scripts/enable_canary_traffic.sh`. This script simply applies the missing `app: customer-resolution-agent` label to the Dark Pod, instantly exposing it to the main Kubernetes Service.
-*   The script also scales the `stable` deployment to 4 replicas.
-*   The math: 4 stable pods + 1 canary pod = **~20% of live user traffic** routes to the new code for advanced sanity checks, metric monitoring, and manual testing.
-
-### Phase 3: Promotion (100% Real Traffic)
-After the canonical monitoring period (e.g., 1 hour), running `scripts/promote_canary.sh` pushes the new verified image SHA to the `stable-deployment` and scales the `canary` pod back down to 0, completely turning over the infrastructure to the new version.
+The same `agent-eval run-eval` command drives both — the only difference is whether
+`--endpoint` points at a Reasoning Engine resource.
 
 ---
 
-## Sanity Check vs Full Evaluation
+## Quality Gate Thresholds
 
-The **sanity check** (`scripts/sanity_check.py`) runs in < 5 seconds **before** the full evaluation:
+We split metrics into two buckets:
 
-```
-Deploy canary → Sanity check (fast, free) → Full eval (slow, costs money)
-                     ↓ fail                       ↓ fail
-               Abort immediately            Quality gate blocks promotion
-```
+**Deterministic (threshold = 1.0).** Routing accuracy, tool-call trajectory,
+safety/toxicity. Any drop is a build break — there's no acceptable margin for
+the orchestrator routing a billing question to the technical specialist.
 
-**What sanity check validates:**
-| Check | Purpose |
-|---|---|
-| `GET /health` → 200 | Pod is alive |
-| `GET /ready` → 200 | Model finished loading |
-| `GET /version` matches SHA | We're targeting the right pod |
-| `POST /predict` → 200 | Endpoint is responding |
-| Latency < 5000ms | No extreme slowdown |
-| Response non-empty | Agent isn't returning blank |
-| No "Agent Error:" in response | Not silently failing |
+**Generative (threshold ≈ 0.85–0.90).** Groundedness, helpfulness, tone. These
+are LLM-judged on free-form text, so a strict 1.0 cutoff produces false
+positives on perfectly acceptable rephrases.
+
+The bundled `--safety-threshold` flag defaults to 0.9 as the aggregated baseline.
+Production systems should additionally enforce hard `<1.0` blocks on routing and
+tool trajectory independently.
 
 ---
 
-## Establishing Evaluation Thresholds
+## Memory Bank
 
-When evaluating LLMs, not all metrics should be treated equally. We divide them into two categories:
+The orchestrator owns a Memory Bank; specialists are wired to share it. This
+means a customer asking the orchestrator for a refund, getting handed off to
+billing, and then mentioning their account email to account-specialist all see
+the same memory state.
 
-### 1. Deterministic Metrics (Threshold: 1.0 or 100%)
-These test the "mechanical" aspects of your multi-agent system. An agent must **never** fail these in a golden dataset.
-*   **Routing Accuracy:** Did the Orchestrator choose the `billing_agent` for a refund request?
-*   **Tool Trajectory (Tool Call Convergence):** Did the agent successfully invoke `lookup_invoice` followed by `issue_refund` with the correct JSON schema? 
-*   **Safety / Toxicity:** Does the response violate fundamental brand safety rules?
-*   *If any of these drop below 1.0 (100%), the build must fail. There is no acceptable margin of error for a tool calling the wrong API.*
+Two facts the SDK doesn't make obvious — and that took us a deploy or two to learn:
 
-### 2. Generative Quality Metrics (Threshold: 0.85 - 0.90)
-These evaluate the *nuance* of the natural language response using LLM-as-a-judge (Vertex AI).
-*   **Groundedness:** Is the response supported by the provided context?
-*   **Fulfillment / Helpfulness:** Did it actually answer the user's specific underlying anxiety?
-*   **Empathy:** Was the tone appropriate?
-*   *Because language is subjective, aiming for 100% will cause perfectly acceptable deployments to fail (false positives). A threshold of 0.85 to 0.90 ensures high quality while allowing for minor stylistic variations in how the LLM phrases the answer.*
-
-In this reference implementation, we use an aggregated `--safety-threshold 0.9` as the baseline gate, but production systems will typically enforce `<1.0` blocking limits on routing independently.
+1. **Both ends must be wired.** `AdkApp(memory_service_builder=...)` is just a
+   client factory. The Memory Bank itself only exists if `context_spec.memory_bank_config`
+   is set on the Reasoning Engine resource. Without that, writes succeed at the
+   SDK layer and zero memories ever persist. `deploy_agent_engine.py` does both.
+2. **`delete_session` does NOT trigger memory generation.** Memories are only
+   summarised when the session ends naturally (timeout). Smoke tests have to
+   wait ~30 seconds (`MEMORY_PERSIST_WAIT_SECONDS`) before reading back.
 
 ---
 
-## Rollback Example (When the Quality Gate Fails)
+## Governance Surface
 
-Because we use a **GitOps** approach (via ArgoCD), a rollback is simply a Git Revert.
+Every Build-phase deploy emits an **ABOM** (Agent Bill of Materials) capturing:
 
-**The Scenario:**
-1. A developer modifies the Orchestrator prompt, accidentally confusing its routing logic.
-2. The code is merged to `main`.
-3. GitHub Actions builds the new `:abcd123` image and commits it to `deploy/k8s/canary-deployment.yaml`.
-4. ArgoCD detects the commit and deploys 1 pod of the broken Orchestrator (0% real traffic).
+- Agent display name + version (the deploying commit SHA)
+- The exact deployed model (`orchestrator_agent.model` at deploy time)
+- A SHA-256 hash of system instructions and the tool manifest
+- The bound Model Armor template (or absence)
+- The agent's GSA identity
+- Pinned `requirements` versions
 
-**The Failure:**
-5. The `agent-eval` suite runs against the canary pod. 
-6. The test case *"I was double charged"* is routed to the `technical_agent` instead of the `billing_agent`, entirely missing the required `issue_refund` tool call.
-7. Tool Trajectory score drops to `0.0`. Overall aggregate score drops to `0.72`.
-8. The threshold is `0.9`, so the `agent-eval run-eval` command exits with Code `1` (Failure).
+The ABOM is written to `build/abom.json` and published as a finding to **Security
+Command Center**, so any subsequent governance scan has a fixed reference point
+for what was deployed.
 
-**The Automated Rollback:**
-9. In `.github/workflows/cd.yml`, the pipeline detects the `failure()`.
-10. The pipeline immediately executes `git revert HEAD --no-edit` and pushes back to `main`.
-11. ArgoCD sees the revert commit, recognizing the canary image should be the old, stable version.
-12. ArgoCD deletes the broken `:abcd123` pod. 
-13. The broken code **never** receives live customer traffic. The developer is notified of the failed Action, and the `.github` logs explicitly show which dataset prompt failed the evaluation.
+**Model Armor** is enforced at the orchestrator's `before_model_callback`. The
+template is provisioned by `setup_model_armor.py`; its resource name is read from
+`MODEL_ARMOR_TEMPLATE` env (or `model_armor_template.txt` at the repo root).
 
 ---
 
 ## Getting Started
 
-### 1. GCP Setup (Provisioning Infrastructure)
-If you want to deploy to GKE, use the included setup script to provision all necessary GCP resources (Cluster, Artifact Registry, Service Accounts, etc.):
-```bash
-# Authenticate
-gcloud auth application-default login
+### Prerequisites
+- A GCP project with Vertex AI, Cloud Run, BigQuery, Security Command Center enabled
+- `gcloud auth application-default login`
+- Python 3.10+ (the Agent Engine ADK runtime requires it)
 
-# Run the setup script
-chmod +x ./scripts/setup_gcp.sh
-./scripts/setup_gcp.sh YOUR_PROJECT_ID
+### 1. Bootstrap
+
+```bash
+make setup                                    # creates ./venv, installs -e ".[dev]"
+cp .env.example .env                          # then fill in GCP_PROJECT, GCP_LOCATION
+source .env                                   # or use direnv / dotenv
 ```
 
-### 2. Local Development (Docker Compose)
-The easiest way to test the entire multi-agent stack locally (Orchestrator, Sub-agents, and MCP Server) is via `docker-compose`. 
+### 2. Provision IAM + MCP
 
-First, ensure you have exported your `GCP_PROJECT`:
 ```bash
-export GCP_PROJECT=your-project-id
-# Mount your local GCP credentials so the containers can call Vertex AI
-gcloud auth application-default login
+./scripts/setup_enterprise_iam.sh $GCP_PROJECT $GCP_LOCATION
+./scripts/deploy_mcp_cloud_run.sh   $GCP_PROJECT $GCP_LOCATION
+# → writes mcp_server_url.txt at repo root
 ```
 
-Then, launch the stack:
-```bash
-# Start all 5 microservices in the background
-docker compose up --build -d
+### 3. Deploy the four agents
 
-# Wait ~30 seconds for models to initialize, then verify:
-curl http://localhost:8080/ready
+```bash
+export GCP_STAGING_BUCKET=gs://agent-eval-staging-$GCP_PROJECT  # or set GCP_STAGING_BUCKET_PREFIX
+make enterprise-deploy
+# orchestrator + 3 specialists now visible in Vertex AI Console → Agent Engine
 ```
 
-**Run End-to-End Evaluation Locally:**
+`make enterprise-deploy` runs `deploy_agent_engine.py` (orchestrator, ABOM, SCC
+finding) followed by `register_agents.py` (specialists, sharing the orchestrator's
+Memory Bank).
+
+### 4. Govern
+
 ```bash
-# Run the evaluation suite against your live local stack
+make govern-setup                             # telemetry sink + alerts + SCC findings
+python scripts/setup_model_armor.py           # provisions the safety template
+```
+
+### 5. Evaluate
+
+```bash
+# CI mode (mock agent — no deployment needed)
+agent-eval run-eval --dataset data/golden_dataset.json
+
+# Live mode — point at the deployed orchestrator Reasoning Engine
 agent-eval run-eval \
   --dataset data/golden_dataset.json \
-  --endpoint http://localhost:8080 \
+  --endpoint $(cat deployed_agent_resource.txt) \
   --safety-threshold 0.9
 ```
 
-### 3. CD Mode — Evaluate Against Live Agent
+The CLI accepts a Reasoning Engine resource name OR an HTTP URL via `--endpoint`.
+
+### 6. Optimize (optional)
+
 ```bash
-# If you have a running agent (local Docker or port-forwarded GKE pod):
-agent-eval run-eval \
-  --dataset data/golden_dataset.json \
-  --endpoint http://localhost:8080 \
-  --safety-threshold 0.9
-```
-
-### 4. Sanity Check Against Running Agent
-```bash
-python scripts/sanity_check.py \
-  --endpoint http://localhost:8080 \
-  --expected-version dev \
-  --latency-threshold-ms 5000
-```
-
-### 5. GKE Deployment
-```bash
-# Apply all manifests
-kubectl apply -f deploy/k8s/namespace.yaml
-kubectl apply -f deploy/k8s/stable-deployment.yaml
-kubectl apply -f deploy/k8s/service.yaml
-kubectl apply -f deploy/k8s/hpa.yaml
-
-# During a canary release
-kubectl apply -f deploy/k8s/canary-deployment.yaml
-
-# After CD quality gate passes — promote
-./scripts/promote_canary.sh <SHORT_SHA> <PROJECT_ID>
+TUNING_DRY_RUN=1 make optimize-trigger        # mines BigQuery, builds SFT data, dry-runs
+TUNING_DRY_RUN=0 make optimize-trigger        # actually submits the Vertex AI SFT job
 ```
 
 ---
 
-## GitHub Actions Setup (Workload Identity Federation)
+## Configuration
 
-This repository secures the connection between GitHub Actions and Google Cloud **without** requiring you to store long-lived JSON Service Account keys. Instead, we use Workload Identity Federation (WIF) which issues secure, temporary, 1-hour tokens.
+Every knob is an environment variable; see `.env.example` for the full list.
+The most-touched ones:
 
-### 1. Establish Trust Link (Run Once Locally)
-Run the setup script to configure WIF in your GCP project:
-```bash
-chmod +x ./scripts/setup_wif.sh
-./scripts/setup_wif.sh YOUR_PROJECT_ID YOUR_GITHUB_USER/YOUR_REPO_NAME
-# Example: ./scripts/setup_wif.sh prod-123 octocat/agent-evaluation-reference
-```
+| Var | Default | Purpose |
+|---|---|---|
+| `GCP_PROJECT` | *required* | Project ID — every script fails fast if unset |
+| `GCP_LOCATION` | `us-central1` | Vertex / Agent Engine / Cloud Run region |
+| `GCP_STAGING_BUCKET` | `gs://agent-eval-staging-<project>` | Where the SDK pickles agents |
+| `GCP_STAGING_BUCKET_PREFIX` | `agent-eval-staging` | Override only the prefix, keep the `-<project>` suffix |
+| `ORCHESTRATOR_MODEL` | `gemini-2.5-pro` | Routing/reasoning quality |
+| `SPECIALIST_MODEL` | `gemini-2.5-flash` | Cost-optimised for specialists |
+| `MEMORY_BANK_GENERATION_MODEL` | `gemini-2.5-flash` | Summarises sessions into memories |
+| `MEMORY_BANK_EMBEDDING_MODEL` | `text-embedding-005` | Similarity search at recall time |
+| `MCP_SERVER_URL` | written by `deploy_mcp_cloud_run.sh` | Audience for authenticated MCP calls |
+| `MODEL_ARMOR_TEMPLATE` | written by `setup_model_armor.py` | Resource name of the safety template |
+| `AGENT_ENDPOINT` | unset | Reasoning Engine resource OR URL for live eval |
+| `*_DISPLAY_NAME` | `customer-resolution-orchestrator`, `billing-specialist`, etc. | Override only to run side-by-side with the reference stack |
 
-### 2. Add GitHub Secrets
-The easiest way is to use the automated setup script (requires [GitHub CLI](https://cli.github.com/)):
-```bash
-chmod +x ./scripts/setup_github_secrets.sh
-./scripts/setup_github_secrets.sh YOUR_PROJECT_ID YOUR_GITHUB_USER/YOUR_REPO_NAME
-```
-
-Alternatively, go to your GitHub Repository -> **Settings** -> **Secrets and variables** -> **Actions** and add these *Repository Secrets* manually:
-
-| Secret Name | Value |
-|---|---|
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output from the WIF script (e.g., `projects/123/locations/global/workloadIdentityPools/...`) |
-| `GCP_SERVICE_ACCOUNT` | Output from the script (e.g., `agent-runtime@YOUR_PROJECT.iam.gserviceaccount.com`) |
-| `GCP_PROJECT_ID` | Your GCP project ID |
-| `GKE_CLUSTER_NAME` | Your GKE cluster name (e.g., `agent-eval-cluster`) |
-| `GKE_CLUSTER_ZONE` | Your GKE cluster zone (e.g., `us-central1`) |
-
-*(There is **no** `GCP_SA_KEY` or `INFRA_REPO_TOKEN` needed — WIF and the automatic GITHUB_TOKEN handle authentication!)*
+Defaults are centralised in `agents/_shared/config.py`. `require("GCP_PROJECT")` is
+used wherever a missing value should fail loud rather than silently target the
+wrong project.
 
 ---
 
 ## CLI Reference
 
 ```bash
-# Basic evaluation (CI mode, mock agent)
+# CI mode — mock agent, no deployment
 agent-eval run-eval --dataset data/golden_dataset.json
 
-# With explicit project and region
+# Override project / region
 agent-eval run-eval \
   --dataset data/golden_dataset.json \
   --project YOUR_PROJECT_ID \
   --location us-central1
 
-# CD mode: evaluate live canary
+# Live mode — evaluate a deployed Reasoning Engine
 agent-eval run-eval \
   --dataset data/golden_dataset.json \
-  --endpoint https://your-agent-url.com \
+  --endpoint $(cat deployed_agent_resource.txt) \
   --safety-threshold 0.9 \
-  --experiment cd-eval-abc1234
+  --experiment cd-eval-$(git rev-parse --short HEAD)
 
-# See all options
 agent-eval run-eval --help
 ```
 
 ---
 
-## 🛠️ Hands-on Learning Path
+## GitHub Actions — Workload Identity Federation
 
-This repository is designed to be explored in three stages:
+CI uses Workload Identity Federation so no long-lived JSON keys are stored.
 
-### 🥉 Level 1: Local Mastery (Zero Cost)
-Learn the agent logic and Python structure without a cloud account.
 ```bash
-make setup
-make test          # Unit tests for agents, MCP, and sanity check.
-make lint          # Run mypy type checking.
+./scripts/setup_wif.sh             $GCP_PROJECT  $GITHUB_USER/$REPO
+./scripts/setup_github_secrets.sh  $GCP_PROJECT  $GITHUB_USER/$REPO   # uses gh CLI
 ```
 
-### 🥈 Level 2: Blueprint Study (System Design)
-Explore the `deploy/k8s/` and `deploy/argocd` directories to understand:
-- How **KEDA** request-based scaling differs from standard CPU HPA.
-- How **ArgoCD** manages GitOps state and prevents configuration drift.
-- How **Multi-agent routing** is defined via Gemini Function Calling.
+Required repo secrets:
 
-### 🥇 Level 3: Full Production Deployment
-Deploy the full 4-agent, multi-phase canary system to GKE.
-1. Run `./scripts/setup_gcp.sh` to build the cluster.
-2. Run `./scripts/setup_wif.sh` to securely link GitHub Actions to GCP (no keys needed!).
-3. Merge a PR and watch the **3-Phase Dark Launch** deployment in real-time.
+| Secret | Source |
+|---|---|
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output of `setup_wif.sh` |
+| `GCP_SERVICE_ACCOUNT` | Output of `setup_wif.sh` |
+| `GCP_PROJECT_ID` | Your project |
 
 ---
-*Created as a reference implementation for GCP Agentic AI Systems.*
+
+*Reference implementation for GCP Agentic AI Systems built on ADK + Vertex AI Agent Engine.*

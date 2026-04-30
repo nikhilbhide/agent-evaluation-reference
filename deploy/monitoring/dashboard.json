@@ -5,76 +5,184 @@
     "tiles": [
       {
         "height": 4,
+        "width": 6,
+        "yPos": 0,
         "widget": {
-          "title": "Agent Latency (p99)",
+          "title": "Agent Latency p99 (per engine)",
           "xyChart": {
             "dataSets": [
               {
                 "plotType": "LINE",
                 "timeSeriesQuery": {
                   "timeSeriesFilter": {
+                    "filter": "metric.type=\"aiplatform.googleapis.com/prediction/latency\" resource.type=\"aiplatform.googleapis.com/ReasoningEngine\"",
                     "aggregation": {
                       "alignmentPeriod": "60s",
-                      "perSeriesAligner": "ALIGN_PERCENTILE_99"
-                    },
-                    "filter": "metric.type=\"aiplatform.googleapis.com/prediction/latency\" resource.type=\"aiplatform.googleapis.com/ReasoningEngine\""
+                      "perSeriesAligner": "ALIGN_PERCENTILE_99",
+                      "crossSeriesReducer": "REDUCE_MEAN",
+                      "groupByFields": ["resource.label.reasoning_engine_id"]
+                    }
                   }
                 }
               }
             ]
           }
-        },
-        "width": 6,
-        "yPos": 0
+        }
       },
       {
         "height": 4,
+        "width": 6,
+        "xPos": 6,
+        "yPos": 0,
         "widget": {
-          "title": "Tool Execution Rate",
+          "title": "Tool Execution Rate (per tool)",
           "xyChart": {
             "dataSets": [
               {
                 "plotType": "STACKED_AREA",
                 "timeSeriesQuery": {
                   "timeSeriesFilter": {
+                    "filter": "metric.type=\"logging.googleapis.com/user/agent_mcp_tool_call_count\" resource.type=\"cloud_run_revision\"",
                     "aggregation": {
                       "alignmentPeriod": "60s",
-                      "perSeriesAligner": "ALIGN_RATE"
-                    },
-                    "filter": "metric.type=\"aiplatform.googleapis.com/agent/tool_use_count\" resource.type=\"aiplatform.googleapis.com/ReasoningEngine\""
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["metric.label.tool"]
+                    }
                   }
                 }
               }
             ]
           }
-        },
-        "width": 6,
-        "xPos": 6,
-        "yPos": 0
+        }
       },
       {
         "height": 4,
+        "width": 6,
+        "yPos": 4,
         "widget": {
-          "title": "Agent Fulfillment Score (Vertex AI Eval)",
+          "title": "MCP Tool Error Rate (per tool)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "timeSeriesQueryLanguage": "fetch cloud_run_revision | metric 'logging.googleapis.com/user/agent_mcp_tool_call_count' | align rate(1m) | group_by [metric.tool], [error_rate: sum(if(metric.status != 'ok', val(), 0)) / sum(val())]"
+                }
+              }
+            ],
+            "thresholds": [{"value": 0.05}]
+          }
+        }
+      },
+      {
+        "height": 4,
+        "width": 6,
+        "xPos": 6,
+        "yPos": 4,
+        "widget": {
+          "title": "Tool Calls by Calling Agent (principal)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "STACKED_BAR",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"logging.googleapis.com/user/agent_mcp_tool_call_count\" resource.type=\"cloud_run_revision\"",
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["metric.label.principal", "metric.label.tool"]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "height": 4,
+        "width": 4,
+        "yPos": 8,
+        "widget": {
+          "title": "Eval · Safety mean (per experiment)",
           "xyChart": {
             "dataSets": [
               {
                 "plotType": "LINE",
                 "timeSeriesQuery": {
                   "timeSeriesFilter": {
+                    "filter": "metric.type=\"custom.googleapis.com/agent/evaluation/safety_mean\" resource.type=\"global\"",
                     "aggregation": {
                       "alignmentPeriod": "3600s",
-                      "perSeriesAligner": "ALIGN_MEAN"
-                    },
-                    "filter": "metric.type=\"custom.googleapis.com/agent/evaluation/fulfillment_score\" resource.type=\"global\""
+                      "perSeriesAligner": "ALIGN_MEAN",
+                      "crossSeriesReducer": "REDUCE_MEAN",
+                      "groupByFields": ["metric.label.experiment"]
+                    }
+                  }
+                }
+              }
+            ],
+            "thresholds": [{"value": 0.9}]
+          }
+        }
+      },
+      {
+        "height": 4,
+        "width": 4,
+        "xPos": 4,
+        "yPos": 8,
+        "widget": {
+          "title": "Eval · Groundedness mean",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"custom.googleapis.com/agent/evaluation/groundedness_mean\" resource.type=\"global\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_MEAN",
+                      "crossSeriesReducer": "REDUCE_MEAN",
+                      "groupByFields": ["metric.label.experiment"]
+                    }
+                  }
+                }
+              }
+            ],
+            "thresholds": [{"value": 0.85}]
+          }
+        }
+      },
+      {
+        "height": 4,
+        "width": 4,
+        "xPos": 8,
+        "yPos": 8,
+        "widget": {
+          "title": "Eval · Total tokens consumed (per engine)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"custom.googleapis.com/agent/evaluation/total_token_count\" resource.type=\"global\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_SUM",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["metric.label.reasoning_engine_id"]
+                    }
                   }
                 }
               }
             ]
           }
-        },
-        "width": 12,
-        "yPos": 4
+        }
       }
     ]
   }

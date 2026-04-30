@@ -6,9 +6,8 @@ Vertex AI Console Playground.
 
 Run from Python 3.10+ (use venv-adk):
     source venv-adk/bin/activate
-    export GCP_PROJECT=agent-evaluation-494310
+    export GCP_PROJECT=<your-project-id>
     export GCP_LOCATION=us-central1
-    export GCP_STAGING_BUCKET=gs://agent-eval-staging-agent-evaluation-494310
     python scripts/redeploy_all.py
 """
 
@@ -20,21 +19,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import vertexai
 from google.cloud import aiplatform_v1beta1
+from google.cloud.aiplatform_v1beta1.types import DeleteReasoningEngineRequest
 
+from agents._shared.config import (
+    ACCOUNT_DISPLAY_NAME,
+    BILLING_DISPLAY_NAME,
+    ORCHESTRATOR_DISPLAY_NAME,
+    TECHNICAL_DISPLAY_NAME,
+    require,
+    staging_bucket,
+)
 from scripts.deploy_agent_engine import deploy as deploy_orchestrator
 from scripts.register_agents import deploy_all_specialists
 
-PROJECT_ID = os.environ.get("GCP_PROJECT", "agent-evaluation-494310")
+PROJECT_ID = require("GCP_PROJECT")
 LOCATION = os.environ.get("GCP_LOCATION", "us-central1")
-STAGING_BUCKET = os.environ.get("GCP_STAGING_BUCKET", f"gs://agent-eval-staging-{PROJECT_ID}")
+STAGING_BUCKET = staging_bucket(PROJECT_ID)
 
 # Any Reasoning Engine whose display_name matches one of these is torn down.
+# `*-custom` is a legacy display name still in some projects from earlier
+# deploy paths — keep matching it so teardown stays idempotent.
 TARGET_DISPLAY_NAMES = {
-    "customer-resolution-orchestrator",
-    "customer-resolution-orchestrator-custom",
-    "billing-specialist",
-    "account-specialist",
-    "technical-specialist",
+    ORCHESTRATOR_DISPLAY_NAME,
+    f"{ORCHESTRATOR_DISPLAY_NAME}-custom",
+    BILLING_DISPLAY_NAME,
+    ACCOUNT_DISPLAY_NAME,
+    TECHNICAL_DISPLAY_NAME,
 }
 
 # Stale resource-name files to clear so a partial old run doesn't mislead.
@@ -67,7 +77,12 @@ def teardown_existing() -> None:
             print(f"   - {re.display_name} ({re.name})")
         for re in matches:
             try:
-                op = client.delete_reasoning_engine(name=re.name)
+                # force=True cascades through child sessions (Memory Bank-wired
+                # engines accumulate sessions per user_id; without force, delete
+                # fails with "contains child resources: sessions").
+                op = client.delete_reasoning_engine(
+                    request=DeleteReasoningEngineRequest(name=re.name, force=True)
+                )
                 op.result(timeout=300)
                 print(f"   ✅ deleted {re.display_name}")
             except Exception as exc:

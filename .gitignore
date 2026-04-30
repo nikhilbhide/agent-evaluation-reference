@@ -49,3 +49,11 @@ test_metric.py
 
 # Kubernetes secrets (never commit real values)
 deploy/k8s/secret.yaml
+
+# Deploy-time artifacts — written by deploy scripts, contain project-identifying
+# resource paths (Reasoning Engine IDs, Cloud Run URLs, Model Armor template).
+# Treat as local-only outputs; downstream scripts read them via env vars.
+deployed_*.txt
+deployed_*.json
+mcp_server_url.txt
+model_armor_template.txt

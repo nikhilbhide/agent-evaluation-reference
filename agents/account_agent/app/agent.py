@@ -1,59 +1,55 @@
 from google.adk.agents import Agent
-import requests
-import os
+from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 import logging
+
+from agents._shared.config import SPECIALIST_MODEL
+from agents._shared.mcp_client import MCPAuthError, MCPCallError, call_tool
+from agents._shared.model_armor import make_before_model_callback
 
 logger = logging.getLogger(__name__)
 
-MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://mcp-server.agent.svc.cluster.local")
 
 def lookup_account(identifier: str) -> str:
     """Retrieves account information for a customer by email or account ID."""
     logger.info(f"Tool call: lookup_account({identifier})")
     try:
-        resp = requests.post(
-            f"{MCP_SERVER_URL}/mcp/tools/call",
-            json={"name": "lookup_account", "arguments": {"identifier": identifier}},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return str(resp.json().get("result"))
-    except requests.RequestException as exc:
-        logger.warning("MCP lookup_account unavailable; using demo fallback: %s", exc)
-        return (
-            f"Account details for {identifier}: status active, tier gold, "
-            "member_since 2021-05-12, primary_email user@example.com."
-        )
+        return str(call_tool("lookup_account", {"identifier": identifier}))
+    except MCPAuthError as exc:
+        logger.error("MCP auth error on lookup_account: %s", exc)
+        return "TOOL_ERROR: account agent is not authorized to call lookup_account."
+    except MCPCallError as exc:
+        logger.error("MCP call error on lookup_account: %s", exc)
+        return "TOOL_ERROR: account lookup is currently unavailable."
+
 
 def lookup_transaction(transaction_id: str) -> str:
     """Retrieves details for a specific transaction by its ID."""
     logger.info(f"Tool call: lookup_transaction({transaction_id})")
     try:
-        resp = requests.post(
-            f"{MCP_SERVER_URL}/mcp/tools/call",
-            json={"name": "lookup_transaction", "arguments": {"transaction_id": transaction_id}},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return str(resp.json().get("result"))
-    except requests.RequestException as exc:
-        logger.warning("MCP lookup_transaction unavailable; using demo fallback: %s", exc)
-        return (
-            f"Transaction {transaction_id}: date 2024-04-20, amount $149.99, "
-            "description 'Annual Subscription', status successful."
-        )
+        return str(call_tool("lookup_transaction", {"transaction_id": transaction_id}))
+    except MCPAuthError as exc:
+        logger.error("MCP auth error on lookup_transaction: %s", exc)
+        return "TOOL_ERROR: account agent is not authorized to call lookup_transaction."
+    except MCPCallError as exc:
+        logger.error("MCP call error on lookup_transaction: %s", exc)
+        return "TOOL_ERROR: transaction lookup is currently unavailable."
+
 
 account_agent = Agent(
     name="account_agent",
-    model="gemini-2.5-flash",
+    model=SPECIALIST_MODEL,
     instruction="""
     You are the Account Management Agent for TechCorp.
     You handle account access, profile updates, and plan changes.
-    
+
     1. Always verify the account status using lookup_account.
     2. Help users with password resets, address updates, or plan migrations.
     3. Be professional and secure.
+
+    ERROR HANDLING: If a tool returns a string starting with "TOOL_ERROR:",
+    do NOT fabricate account data. Apologize and route to a human.
     """,
     description="Specialist for account access, security, and profile management.",
-    tools=[lookup_account, lookup_transaction]
+    before_model_callback=make_before_model_callback(),
+    tools=[PreloadMemoryTool(), lookup_account, lookup_transaction]
 )

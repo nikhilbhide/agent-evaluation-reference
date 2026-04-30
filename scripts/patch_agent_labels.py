@@ -10,13 +10,19 @@ If RESOURCE_NAME is omitted, reads it from deployed_agent_resource.txt.
 
 import os
 import sys
+from pathlib import Path
 
-PROJECT_ID = os.environ.get("GCP_PROJECT", "agent-evaluation-494310")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from agents._shared.config import require
+from agents._shared.versions import ADK_VERSION
+
+PROJECT_ID = require("GCP_PROJECT")
 LOCATION = os.environ.get("GCP_LOCATION", "us-central1")
 
 ADK_LABELS = {
     "goog-vertex-reasoning-engine-adk": "true",
-    "goog-adk-version": "1-18-0",
+    "goog-adk-version": ADK_VERSION.replace(".", "-"),
     "goog-vertex-reasoning-engine-template": "adk",
 }
 

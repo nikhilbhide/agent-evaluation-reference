@@ -51,7 +51,15 @@ def publish_finding(project_id: str, abom_path: str):
         return
     
     finding_id = f"agent-abom-{abom['metadata']['agent_version'][:8]}-{uuid.uuid4().hex[:6]}"
-    resource_name = f"//aiplatform.googleapis.com/projects/{project_id}/locations/us-central1/reasoningEngines/enterprise-agent"
+    # Build the SCC resource_name from the same env the rest of the stack uses,
+    # and from the agent_name baked into the ABOM, so a finding always points at
+    # the actually-deployed engine instead of a stale `enterprise-agent` literal.
+    location = os.environ.get("GCP_LOCATION", "us-central1")
+    agent_name = abom["metadata"].get("agent_name", "agent")
+    resource_name = (
+        f"//aiplatform.googleapis.com/projects/{project_id}"
+        f"/locations/{location}/reasoningEngines/{agent_name}"
+    )
 
     # Define the finding
     finding = Finding(

@@ -1,5 +1,6 @@
 import json
 import time
+import uuid
 import pandas as pd
 from typing import Optional
 from google.cloud import monitoring_v3
@@ -8,46 +9,96 @@ from agent_eval.agent.core import init_agent, run_customer_resolution_agent
 from agent_eval.agent.endpoint import run_agent_via_endpoint
 from agent_eval.evaluation.metrics import get_resolution_metric
 from agent_eval.utils.logger import get_logger
+from agent_eval.utils import trace_logger
 
 logger = get_logger(__name__)
 
 # Default quality gate thresholds
 DEFAULT_SAFETY_THRESHOLD = 0.9
 
-def log_eval_metrics_to_cloud_monitoring(project_id: str, summary: dict):
-    """Logs evaluation summary metrics to Google Cloud Monitoring."""
+def log_eval_metrics_to_cloud_monitoring(
+    project_id: str,
+    summary: dict,
+    metrics_table: Optional[pd.DataFrame] = None,
+    experiment: Optional[str] = None,
+    engine_id: Optional[str] = None,
+):
+    """Logs evaluation summary + token-usage metrics to Cloud Monitoring.
+
+    Each series is tagged with `experiment` and (when available) the
+    `reasoning_engine_id` so dashboards can group per-engine.
+    """
     client = monitoring_v3.MetricServiceClient()
     project_name = f"projects/{project_id}"
 
-    series = []
     timestamp = time.time()
     seconds = int(timestamp)
     nanos = int((timestamp - seconds) * 10**9)
-    interval = monitoring_v3.TimeInterval(
-        end_time={"seconds": seconds, "nanos": nanos}
-    )
+    interval = monitoring_v3.TimeInterval(end_time={"seconds": seconds, "nanos": nanos})
 
+    base_labels: dict[str, str] = {}
+    if experiment:
+        base_labels["experiment"] = experiment
+    if engine_id:
+        base_labels["reasoning_engine_id"] = engine_id
+
+    series: list = []
+
+    # Summary scalar metrics from EvalTask (safety/mean, groundedness/mean, ...)
     for metric_name, value in summary.items():
-        if isinstance(value, (int, float)):
-            # Clean up metric name for GCP (only alpha-numeric and underscores)
-            clean_name = metric_name.replace("/", "_").replace(".", "_")
-            
-            point = monitoring_v3.Point(
+        if not isinstance(value, (int, float)):
+            continue
+        clean = metric_name.replace("/", "_").replace(".", "_")
+        series.append(monitoring_v3.TimeSeries(
+            metric={
+                "type": f"custom.googleapis.com/agent/evaluation/{clean}",
+                "labels": base_labels,
+            },
+            resource={"type": "global"},
+            points=[monitoring_v3.Point(
                 interval=interval,
-                value={"double_value": float(value)}
-            )
-            series.append(monitoring_v3.TimeSeries(
-                metric={"type": f"custom.googleapis.com/agent/evaluation/{clean_name}"},
-                resource={"type": "global"},
-                points=[point]
-            ))
+                value={"double_value": float(value)},
+            )],
+        ))
 
-    if series:
-        try:
-            client.create_time_series(name=project_name, time_series=series)
-            logger.info(f"✅ Logged {len(series)} metrics to Cloud Monitoring")
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to log metrics to Cloud Monitoring: {e}")
+    # Token / cost telemetry: sum the per-row token counts that EvalTask
+    # surfaces in the metrics_table when the underlying judge or agent calls
+    # report them. This is the only place we can emit per-eval-run cost.
+    if metrics_table is not None:
+        for col in ("prompt_token_count", "candidates_token_count", "total_token_count"):
+            if col in metrics_table.columns:
+                total = float(pd.to_numeric(metrics_table[col], errors="coerce").fillna(0).sum())
+                series.append(monitoring_v3.TimeSeries(
+                    metric={
+                        "type": f"custom.googleapis.com/agent/evaluation/{col}",
+                        "labels": base_labels,
+                    },
+                    resource={"type": "global"},
+                    points=[monitoring_v3.Point(
+                        interval=interval,
+                        value={"double_value": total},
+                    )],
+                ))
+
+    if not series:
+        return
+    try:
+        client.create_time_series(name=project_name, time_series=series)
+        logger.info(f"✅ Logged {len(series)} metrics to Cloud Monitoring "
+                    f"(labels={base_labels or 'none'})")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to log metrics to Cloud Monitoring: {e}")
+
+def _engine_id_from_endpoint(endpoint_url: Optional[str]) -> Optional[str]:
+    """Extract the Reasoning Engine ID from an endpoint URL when present.
+
+    Cloud Run endpoints don't have engine IDs, so this returns None for them
+    and the metric series simply omits the label.
+    """
+    if not endpoint_url or "reasoningEngines/" not in endpoint_url:
+        return None
+    return endpoint_url.split("reasoningEngines/")[-1].split("/")[0].split("?")[0]
+
 
 def evaluate_agent(
     project_id: str,
@@ -128,8 +179,44 @@ def evaluate_agent(
         logger.info(f"Average Fulfillment Score: {summary.get('fulfillment', 'N/A')}")
         logger.info(f"Average CUSTOM Resolution Score: {summary.get('pointwise_metric_score', 'N/A')}")
         
-        # Log to Cloud Monitoring for historical dashboarding
-        log_eval_metrics_to_cloud_monitoring(project_id, summary)
+        # Log to Cloud Monitoring for historical dashboarding (with labels for
+        # per-experiment + per-engine grouping in the dashboard).
+        engine_id = _engine_id_from_endpoint(endpoint_url)
+        log_eval_metrics_to_cloud_monitoring(
+            project_id,
+            summary,
+            metrics_table=result.metrics_table,
+            experiment=experiment_name,
+            engine_id=engine_id,
+        )
+
+        # Write per-turn rows to BigQuery so the optimize loop has data to
+        # query against. setup_telemetry_sink.py provisions the table.
+        try:
+            run_id = f"{experiment_name}-{uuid.uuid4().hex[:6]}"
+            rows = []
+            for _, row in result.metrics_table.iterrows():
+                meta = row.get("_meta") or {}
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except Exception:
+                        meta = {}
+                rows.append(trace_logger.eval_row(
+                    run_id=run_id,
+                    experiment=experiment_name,
+                    engine_id=engine_id,
+                    prompt=str(row.get("prompt", "")),
+                    response=str(row.get("response", "")),
+                    reference=str(row.get("reference", "")) if row.get("reference") else None,
+                    metrics={k: row.get(k) for k in row.index if isinstance(row.get(k), (int, float))},
+                    expected_route=meta.get("expected_route"),
+                    category=meta.get("category"),
+                    session_id=str(row.get("session_id", "")) or None,
+                ))
+            trace_logger.write_rows(project_id, rows)
+        except Exception as exc:
+            logger.warning(f"⚠️ BigQuery trace logging skipped: {exc}")
 
         logger.info("Detailed DataFrame metrics preview:")
         pd.set_option('display.max_columns', None)

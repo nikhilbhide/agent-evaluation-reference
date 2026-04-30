@@ -56,7 +56,8 @@ paths:
 if __name__ == "__main__":
     project = os.environ.get("GCP_PROJECT")
     mcp_url = os.environ.get("MCP_SERVER_URL")
+    location = os.environ.get("GCP_LOCATION", "us-central1")
     if not project or not mcp_url:
         print("❌ GCP_PROJECT and MCP_SERVER_URL must be set")
         sys.exit(1)
-    register_mcp_as_extension(project, "us-central1", mcp_url)
+    register_mcp_as_extension(project, location, mcp_url)

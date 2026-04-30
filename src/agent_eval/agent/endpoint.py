@@ -21,44 +21,22 @@ def run_agent_via_endpoint(prompt: str, endpoint_url: str, session_id: str = "de
     Supports both REST URLs and Vertex AI Reasoning Engine resource names.
     """
     
-    # Check if it's a Reasoning Engine resource name
+    # Check if it's a Reasoning Engine resource name → use GA agent_engines API.
     if endpoint_url.startswith("projects/"):
         logger.info(f"Calling Reasoning Engine: {endpoint_url} (session={session_id})")
         try:
-            remote_agent = reasoning_engines.ReasoningEngine(endpoint_url)
-            # Standardize sid
-            sid = str(session_id) if (session_id and str(session_id) != "nan") else "eval-session"
-            
-            # 1. Try .query()
-            if hasattr(remote_agent, 'query'):
-                response = remote_agent.query(input=prompt, user_id="eval-user", session_id=sid)
-                return str(response)
-            
-            # 2. Try .stream_query()
-            if hasattr(remote_agent, 'stream_query'):
-                responses = []
-                for chunk in remote_agent.stream_query(message=prompt, user_id="eval-user", session_id=sid):
-                    # Handle ADK response objects
-                    if hasattr(chunk, 'text'):
-                        responses.append(chunk.text)
-                    elif isinstance(chunk, dict) and 'text' in chunk:
-                        responses.append(chunk['text'])
-                    else:
-                        responses.append(str(chunk))
-                return "".join(responses)
-
-            # 3. Try .predict()
-            if hasattr(remote_agent, 'predict'):
-                response = remote_agent.predict(input=prompt)
-                return str(response)
-
-            # 4. Final attempt: direct call if it's a callable app
-            try:
-                response = remote_agent.query(input=prompt, user_id="eval-user", session_id=sid)
-                return str(response)
-            except Exception:
-                return f"Agent Error: Remote agent at {endpoint_url} has no supported methods (query/stream_query/predict)."
-
+            from vertexai import agent_engines
+            engine = agent_engines.get(endpoint_url)
+            user_id = "eval-user"
+            chunks = []
+            for ev in engine.stream_query(message=prompt, user_id=user_id):
+                content = ev.get("content") if isinstance(ev, dict) else None
+                if not content:
+                    continue
+                for p in (content.get("parts") or []):
+                    if isinstance(p, dict) and p.get("text"):
+                        chunks.append(p["text"])
+            return "".join(chunks).strip() or "(empty response)"
         except Exception as e:
             logger.error(f"Reasoning Engine call failed: {e}")
             return f"Agent Error: {str(e)}"
