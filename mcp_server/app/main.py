@@ -33,11 +33,18 @@ from app.auth import authorize_tool, expected_principals
 from app.tools.billing import issue_refund, lookup_invoice
 from app.tools.account import lookup_account, lookup_transaction
 from app.tools.knowledge_base import search_knowledge_base
+from app.tracing import get_tracer, instrument_app, setup_tracing
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
+# Configure OTel before constructing FastAPI so the instrumentor sees a
+# live TracerProvider. Spans flow to Cloud Trace and feed the Agent
+# Platform Topology view.
+setup_tracing()
 app = FastAPI(title="MCP Tool Server", version="1.0.0")
+instrument_app(app)
+_tracer = get_tracer()
 
 
 # ── Tool Registry ──────────────────────────────────────────────────────────────
@@ -159,16 +166,26 @@ async def call_tool(
     tool_fn = TOOL_REGISTRY[req.name]["fn"]
     logger.info("principal=%s tool=%s args=%s", principal, req.name, req.arguments)
 
-    try:
-        result = tool_fn(**req.arguments)
-        logger.info("principal=%s tool=%s status=ok", principal, req.name)
-        return ToolCallResponse(name=req.name, result=result)
-    except TypeError as e:
-        logger.error("principal=%s tool=%s status=bad_args err=%s", principal, req.name, e)
-        raise HTTPException(status_code=400, detail=f"Invalid arguments for tool '{req.name}': {e}")
-    except Exception as e:
-        logger.error("principal=%s tool=%s status=error err=%s", principal, req.name, e)
-        return ToolCallResponse(name=req.name, result=None, error=str(e))
+    # Wrap the actual tool execution in a child span so Cloud Trace shows
+    # tool granularity (FastAPI auto-spans only cover the HTTP handler).
+    with _tracer.start_as_current_span(f"mcp.tool.{req.name}") as span:
+        span.set_attribute("mcp.tool.name", req.name)
+        span.set_attribute("mcp.principal", principal)
+        try:
+            result = tool_fn(**req.arguments)
+            span.set_attribute("mcp.tool.status", "ok")
+            logger.info("principal=%s tool=%s status=ok", principal, req.name)
+            return ToolCallResponse(name=req.name, result=result)
+        except TypeError as e:
+            span.set_attribute("mcp.tool.status", "bad_args")
+            span.record_exception(e)
+            logger.error("principal=%s tool=%s status=bad_args err=%s", principal, req.name, e)
+            raise HTTPException(status_code=400, detail=f"Invalid arguments for tool '{req.name}': {e}")
+        except Exception as e:
+            span.set_attribute("mcp.tool.status", "error")
+            span.record_exception(e)
+            logger.error("principal=%s tool=%s status=error err=%s", principal, req.name, e)
+            return ToolCallResponse(name=req.name, result=None, error=str(e))
 
 
 @app.get("/health")
