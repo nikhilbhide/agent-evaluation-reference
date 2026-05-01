@@ -35,19 +35,20 @@ make eval
 - Keep PRs focused: one logical change per PR
 - Add/update docstrings for any new public functions
 - If adding a new CLI flag, update `README.md`
-- If adding a new Kubernetes manifest, add a comment block explaining it
+- If touching deploy flow, update the relevant `Makefile` target and the README phase tables
 
 ## Project Structure Quick Reference
 
 | Directory | Purpose |
 |---|---|
-| `src/agent_eval/` | Evaluation framework Python package |
-| `agent/` | Deployable FastAPI agent microservice |
-| `deploy/k8s/` | GKE Kubernetes manifests |
-| `scripts/` | CI/CD shell scripts (setup, canary, rollback) |
+| `src/agent_eval/` | Evaluation framework Python package (runner, metrics, telemetry, ABOM) |
+| `agents/` | ADK agents deployed to Vertex AI Agent Engine (orchestrator + 3 specialists + `_shared/`) |
+| `mcp_server/` | FastAPI MCP tool server deployed to Cloud Run |
+| `deploy/monitoring/` | Cloud Monitoring dashboard + alert policy JSON |
+| `scripts/` | Deploy, register, telemetry, red-team, tuning, and load-test scripts |
 | `tests/` | Unit tests (no GCP calls — fully mocked) |
-| `data/` | Golden evaluation dataset |
-| `.github/workflows/` | CI and CD pipelines |
+| `data/` | Golden evaluation dataset + red-team prompts |
+| `.github/workflows/` | CI pipeline (`ci.yml`) |
 
 ## Reporting Issues
 

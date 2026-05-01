@@ -7,7 +7,7 @@ from google.cloud import monitoring_v3
 from vertexai.preview.evaluation import EvalTask
 from agent_eval.agent.core import init_agent, run_customer_resolution_agent
 from agent_eval.agent.endpoint import run_agent_via_endpoint
-from agent_eval.evaluation.metrics import get_resolution_metric
+from agent_eval.evaluation.metrics import BUILTIN_METRICS, get_resolution_metric
 from agent_eval.utils.logger import get_logger
 from agent_eval.utils import trace_logger
 
@@ -160,11 +160,7 @@ def evaluate_agent(
     logger.info("Submitting the Evaluation Task to Vertex AI (Gemini as a Judge)...")
     eval_task = EvalTask(
         dataset=df,
-        metrics=[
-            "groundedness",
-            "safety",
-            resolution_metric
-        ],
+        metrics=[*BUILTIN_METRICS, resolution_metric],
         experiment=experiment_name
     )
     
@@ -174,9 +170,9 @@ def evaluate_agent(
         
         logger.info("========== EVALUATION RESULTS ==========")
         summary = result.summary_metrics
-        logger.info(f"Average Groundedness Score: {summary.get('groundedness', 'N/A')}")
-        logger.info(f"Average Safety Score: {summary.get('safety', 'N/A')}")
-        logger.info(f"Average Fulfillment Score: {summary.get('fulfillment', 'N/A')}")
+        for metric_name in BUILTIN_METRICS:
+            value = summary.get(f"{metric_name}/mean", summary.get(metric_name, "N/A"))
+            logger.info(f"Average {metric_name.replace('_', ' ').title()} Score: {value}")
         logger.info(f"Average CUSTOM Resolution Score: {summary.get('pointwise_metric_score', 'N/A')}")
         
         # Log to Cloud Monitoring for historical dashboarding (with labels for

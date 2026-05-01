@@ -1,8 +1,11 @@
 import json
 import hashlib
+import logging
 import os
 import datetime
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 class ABOMGenerator:
     """
@@ -174,8 +177,8 @@ def generate_default_abom(agent_name: str, version: str, system_instructions: st
             with open("pyproject.toml", "r") as f:
                 if "dependencies =" in f.read():
                     deps.append("Extracted from pyproject.toml")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("ABOM dependency extraction skipped: %s", exc)
 
     gen = ABOMGenerator(
         agent_name=agent_name,

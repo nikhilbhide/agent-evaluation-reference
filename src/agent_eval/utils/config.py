@@ -12,8 +12,8 @@ def get_gcp_project() -> str:
             return project
     except Exception as e:
         logger.debug(f"Could not get project from default creds: {e}")
-        pass
-    
+
+
     project = os.environ.get("GOOGLE_CLOUD_PROJECT")
     if project:
         return project
