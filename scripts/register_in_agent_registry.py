@@ -97,12 +97,18 @@ def _service_id(display_name: str) -> str:
 
 
 def _tool_spec_payload() -> str:
-    """Build the MCP tool-spec JSON in the same shape /mcp/tools/list returns."""
+    """Build the MCP tool-spec JSON the registry validator expects.
+
+    The registry's validator follows the canonical MCP spec where each
+    tool carries ``inputSchema`` (NOT ``parameters``, which is the Gemini
+    function-calling convention used internally by ``TOOL_REGISTRY`` and
+    ``/mcp/tools/list``). Translate on the way out.
+    """
     tools = [
         {
             "name": name,
             "description": meta["description"],
-            "parameters": meta["parameters"],
+            "inputSchema": meta["parameters"],
         }
         for name, meta in TOOL_REGISTRY.items()
     ]
@@ -149,7 +155,10 @@ def register_mcp_server() -> None:
         service_id="mcp-tool-server",
         display_name="MCP Tool Server",
         description="Customer-support MCP server (billing, account, KB tools).",
-        interfaces=[{"protocolBinding": "https", "url": mcp_url}],
+        # MCP is JSON-RPC 2.0 over HTTP — the registry's enum value is
+        # `jsonrpc`. Other valid values: grpc, http-json,
+        # protocol-binding-unspecified.
+        interfaces=[{"protocolBinding": "jsonrpc", "url": mcp_url}],
         spec_flags=[
             "--mcp-server-spec-type", "tool-spec",
             "--mcp-server-spec-content", _tool_spec_payload(),
@@ -196,8 +205,10 @@ def register_agents() -> None:
             service_id=_service_id(display_name),
             display_name=display_name,
             description=description,
+            # Reasoning Engine endpoints are HTTP+JSON via the aiplatform
+            # REST API. Registry enum: http-json.
             interfaces=[{
-                "protocolBinding": "https",
+                "protocolBinding": "http-json",
                 "url": _engine_endpoint_url(resource),
             }],
             # We don't ship A2A Agent Cards yet; `no-spec` records the
