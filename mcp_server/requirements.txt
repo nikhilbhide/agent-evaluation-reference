@@ -2,5 +2,12 @@ fastapi>=0.100.0
 uvicorn[standard]>=0.22.0
 pydantic>=2.0.0
 requests>=2.31.0
+# OpenTelemetry → Cloud Trace. Powers the Agent Platform Topology view —
+# spans from agent ↔ MCP calls land in Cloud Trace, and the Topology UI
+# stitches edges from those traces using the Registry service names below.
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+opentelemetry-instrumentation-fastapi>=0.41b0
+opentelemetry-exporter-gcp-trace>=1.6.0
 # Add RAG/Vector Search dependencies here in production
 # google-cloud-aiplatform>=1.60.0

@@ -65,6 +65,21 @@ def _fetch_id_token(audience: str) -> str:
     return token
 
 
+def _inject_trace_context(headers: dict[str, str]) -> None:
+    """Inject the W3C traceparent header so Cloud Trace stitches agent ↔ MCP.
+
+    Agent Engine has tracing on (``enable_tracing=True`` on AdkApp), so the
+    current process always has an active trace context. Best-effort: if the
+    OTel propagator isn't installed (local dev), we silently skip — the
+    MCP server's FastAPI instrumentor will simply start a new root span.
+    """
+    try:
+        from opentelemetry.propagate import inject
+        inject(headers)
+    except ImportError:
+        pass
+
+
 def call_tool(name: str, arguments: dict[str, Any], *, timeout: float = _DEFAULT_TIMEOUT) -> Any:
     """Invoke a named MCP tool with an authenticated request.
 
@@ -75,11 +90,14 @@ def call_tool(name: str, arguments: dict[str, Any], *, timeout: float = _DEFAULT
     token = _fetch_id_token(audience)
     url = f"{audience}/mcp/tools/call"
 
+    headers = {"Authorization": f"Bearer {token}"}
+    _inject_trace_context(headers)
+
     try:
         resp = requests.post(
             url,
             json={"name": name, "arguments": arguments},
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
             timeout=timeout,
         )
     except requests.RequestException as exc:
