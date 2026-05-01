@@ -84,9 +84,13 @@ if ! gcloud run services describe "${MCP_SERVICE}" \
   exit 1
 fi
 
-# Specialist agents (NOT orchestrator) get invoker. Orchestrator does not call
-# tools directly — it delegates to specialists.
-for ROLE in "billing" "technical" "account"; do
+# All four agent GSAs get invoker. We use in-process AgentTool delegation,
+# so MCP egress is signed by agent-orchestrator (not the specialist) — the
+# orchestrator MUST have invoker too or Cloud Run's IAM frontend rejects
+# every tool call with HTTP 401 before the in-app TOOL_ACL even runs. The
+# specialist entries cover any future shift to per-engine specialists
+# calling MCP directly.
+for ROLE in "orchestrator" "billing" "technical" "account"; do
     SA_EMAIL="agent-${ROLE}@${PROJECT_ID}.iam.gserviceaccount.com"
     gcloud run services add-iam-policy-binding "${MCP_SERVICE}" \
         --region="${MCP_REGION}" \
