@@ -148,8 +148,8 @@ def one_call(engine, idx: int):
             "response": item.get("response"),
             "category": cat,
         }])
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"⚠️  load_test BQ telemetry write skipped: {exc}", flush=True)
 
 
 def main() -> None:
