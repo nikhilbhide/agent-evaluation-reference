@@ -34,13 +34,24 @@ def _gsa(role: str) -> str:
 
 
 # Per-principal tool allowlist. Anything not in the list is forbidden.
+#
+# Per-specialist scoping (billing/account/technical) is the strict pattern
+# you'd use if each specialist ran as a separately-deployed Reasoning Engine
+# and called MCP with its own SA. We currently use in-process AgentTool
+# delegation — the orchestrator's runtime executes specialists locally, so
+# every MCP egress is signed by `agent-orchestrator`. The orchestrator entry
+# below grants the *union* of specialist tools so the in-process pattern
+# works while the per-specialist entries above remain enforced for any
+# direct engine-to-engine invocation.
+_BILLING_TOOLS = {"lookup_invoice", "issue_refund"}
+_ACCOUNT_TOOLS = {"lookup_account", "lookup_transaction"}
+_TECHNICAL_TOOLS = {"search_knowledge_base"}
+
 TOOL_ACL: dict[str, set[str]] = {
-    _gsa("billing"): {"lookup_invoice", "issue_refund"},
-    _gsa("account"): {"lookup_account", "lookup_transaction"},
-    _gsa("technical"): {"search_knowledge_base"},
-    # The orchestrator should NOT call tools directly — it delegates to
-    # specialists. Listed here only to make that intent explicit.
-    _gsa("orchestrator"): set(),
+    _gsa("billing"): _BILLING_TOOLS,
+    _gsa("account"): _ACCOUNT_TOOLS,
+    _gsa("technical"): _TECHNICAL_TOOLS,
+    _gsa("orchestrator"): _BILLING_TOOLS | _ACCOUNT_TOOLS | _TECHNICAL_TOOLS,
 }
 
 
