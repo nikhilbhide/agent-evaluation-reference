@@ -46,6 +46,11 @@ register-in-platform:  ## Register MCP + agents in the Agent Platform Registry (
 	@test -n "$(GCP_PROJECT)" || (echo "❌ Set GCP_PROJECT" && exit 1)
 	$(PYTHON) scripts/register_in_agent_registry.py
 
+.PHONY: online-monitor
+online-monitor:  ## Provision/update the OnlineEvaluator that scores live traffic from Cloud Trace
+	@test -n "$(GCP_PROJECT)" || (echo "❌ Set GCP_PROJECT" && exit 1)
+	$(PYTHON) scripts/create_online_monitor.py
+
 ## ── Scale phase: smoke + load test ───────────────────────────────────────────
 
 .PHONY: smoke
