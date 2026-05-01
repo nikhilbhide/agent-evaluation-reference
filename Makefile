@@ -41,6 +41,11 @@ redeploy-all:  ## Tear down all 4 agents and redeploy from scratch
 patch-adk-labels:  ## Stamp ADK Playground labels on a deployed agent (reads deployed_agent_resource.txt if RESOURCE unset)
 	$(PYTHON) scripts/patch_agent_labels.py $(RESOURCE)
 
+.PHONY: register-in-platform
+register-in-platform:  ## Register MCP + agents in the Agent Platform Registry (populates Topology)
+	@test -n "$(GCP_PROJECT)" || (echo "❌ Set GCP_PROJECT" && exit 1)
+	$(PYTHON) scripts/register_in_agent_registry.py
+
 ## ── Scale phase: smoke + load test ───────────────────────────────────────────
 
 .PHONY: smoke
