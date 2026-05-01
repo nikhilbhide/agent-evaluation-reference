@@ -3,24 +3,28 @@ import sys
 import json
 import uuid
 import datetime
-from google.cloud import securitycenter
-from google.cloud.securitycenter_v1 import Finding, Source
+from google.cloud import securitycenter_v2 as securitycenter
+from google.cloud.securitycenter_v2 import Finding, Source
+
 
 def get_or_create_source(client, project_id: str):
-    """Ensures a security source exists for Agent findings."""
+    """Ensures a security source exists for Agent findings.
+
+    SCC v2 API: sources are still parented at the org/folder/project level
+    (NOT location-scoped, even though findings are). The v1 endpoint was
+    permanently disabled — v2 is the only path forward.
+    """
     parent = f"projects/{project_id}"
     source_display_name = "AI Agent Security Scanner"
-    
-    # List sources and look for ours
+
     sources = client.list_sources(request={"parent": parent})
     for source in sources:
         if source.display_name == source_display_name:
             return source.name
-            
-    # Create if not found
+
     source = Source(
         display_name=source_display_name,
-        description="Scans and monitors AI agent ABOMs and evaluation results."
+        description="Scans and monitors AI agent ABOMs and evaluation results.",
     )
     created_source = client.create_source(
         request={"parent": parent, "source": source}
