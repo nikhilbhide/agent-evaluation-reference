@@ -52,15 +52,15 @@ MAX_PER_RUN = int(os.environ.get("ONLINE_MONITOR_MAX_PER_RUN", "100"))
 ORCHESTRATOR_RESOURCE_FILE = ROOT / "deployed_agent_resource.txt"
 
 # Predefined metric names accepted by ``predefinedMetricSpec.metricSpecName``.
-# The schema documents the ``_v1`` versioned form; aligning these with
-# ``BUILTIN_METRICS`` from offline eval keeps online + offline scores
-# directly comparable in dashboards.
+# Discovered from the API's INVALID_ARGUMENT response — the OnlineEvaluator
+# accepts a different (smaller, more agent-specific) set than the offline
+# EvalTask API. These are the four valid names today; offline eval uses
+# the SDK-side ``BUILTIN_METRICS`` list which is a different surface.
 PREDEFINED_METRICS: list[tuple[str, str]] = [
     ("safety_v1", "Safety"),
-    ("groundedness_v1", "Groundedness"),
-    ("instruction_following_v1", "Instruction Following"),
-    ("question_answering_quality_v1", "Question Answering Quality"),
-    ("text_quality_v1", "Text Quality"),
+    ("hallucination_v1", "Hallucination"),
+    ("final_response_quality_v1", "Final Response Quality"),
+    ("tool_use_quality_v1", "Tool Use Quality"),
 ]
 
 
@@ -98,6 +98,11 @@ def _resource_name() -> str:
 
 def _build_body(agent_resource: str) -> dict:
     return {
+        # Setting `name` makes this a client-specified-ID create. Without
+        # it, every run produces a new server-generated ID and idempotency
+        # is lost. The discovery doc lists no `onlineEvaluatorId` query
+        # param, so this body field is the only place the ID can travel.
+        "name": _resource_name(),
         "displayName": "Customer Resolution Online Monitor",
         "agentResource": agent_resource,
         "config": {
@@ -108,6 +113,10 @@ def _build_body(agent_resource: str) -> dict:
             # Pinned to the minimum the API accepts. Bump as Cloud Trace
             # adopts newer semconv revisions in the future.
             "openTelemetry": {"semconvVersion": "1.39.0"},
+            # The API requires one of cloudObservability's eval_scope
+            # oneOf fields to be set. Empty traceScope = "all traces"
+            # (no predicate filtering).
+            "traceScope": {},
         },
         "metricSources": [
             {
@@ -124,17 +133,9 @@ def _build_body(agent_resource: str) -> dict:
     }
 
 
-def _get_existing(token: str) -> dict | None:
-    url = f"{_api_base()}/{_resource_name()}"
-    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
-    if resp.status_code == 200:
-        return resp.json()
-    if resp.status_code == 404:
-        return None
-    raise RuntimeError(f"GET {url} → {resp.status_code}: {resp.text[:300]}")
-
-
-def _create(token: str, body: dict) -> dict:
+def _create(token: str, body: dict) -> tuple[int, dict]:
+    """POST to create. Returns (status, json_body) without raising — caller
+    decides whether ALREADY_EXISTS warrants a PATCH fallback."""
     url = f"{_api_base()}/{_parent()}/onlineEvaluators"
     resp = requests.post(
         url,
@@ -142,13 +143,14 @@ def _create(token: str, body: dict) -> dict:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         },
-        params={"onlineEvaluatorId": MONITOR_ID},
         data=json.dumps(body),
         timeout=60,
     )
-    if resp.status_code >= 300:
-        raise RuntimeError(f"CREATE {url} → {resp.status_code}: {resp.text[:600]}")
-    return resp.json()
+    try:
+        body_json = resp.json()
+    except Exception:
+        body_json = {"raw": resp.text[:300]}
+    return resp.status_code, body_json
 
 
 def _patch(token: str, body: dict) -> dict:
@@ -179,13 +181,21 @@ def main() -> None:
     token = _access_token()
     body = _build_body(agent)
 
-    existing = _get_existing(token)
-    if existing is None:
-        print("   → creating new evaluator")
-        result = _create(token, body)
+    # Try CREATE first; on ALREADY_EXISTS fall back to PATCH. The GET-probe
+    # path returns 500 INTERNAL for missing resources on this API, so going
+    # create-first is more reliable.
+    status, result = _create(token, body)
+    if status >= 300:
+        err_status = (result.get("error") or {}).get("status", "")
+        if status == 409 or err_status == "ALREADY_EXISTS":
+            print("   → evaluator exists, patching mutable fields")
+            result = _patch(token, body)
+        else:
+            raise RuntimeError(
+                f"CREATE failed → HTTP {status}: {json.dumps(result)[:600]}"
+            )
     else:
-        print("   → evaluator exists, patching mutable fields")
-        result = _patch(token, body)
+        print("   → created new evaluator")
 
     print("\n✅ Online monitor ready.")
     print(f"   resource: {result.get('name', _resource_name())}")
