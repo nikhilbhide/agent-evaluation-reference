@@ -184,10 +184,13 @@ AGENT_TARGETS = [
 
 def register_agents() -> None:
     print("\n[2/2] Registering agents")
+    allow_partial = os.environ.get("REGISTRY_ALLOW_PARTIAL", "").lower() in ("1", "true", "yes")
+    missing: list[str] = []
     for display_name, resource_file, description in AGENT_TARGETS:
         resource = _read_engine_resource(resource_file)
         if not resource:
-            print(f"   ⚠️  {resource_file} missing — skipping {display_name}")
+            missing.append(f"{display_name} ({resource_file})")
+            print(f"   ⚠️  {resource_file} missing for {display_name}")
             continue
         _gcloud_create(
             service_id=_service_id(display_name),
@@ -202,6 +205,26 @@ def register_agents() -> None:
             # later when ready.
             spec_flags=["--agent-spec-type", "no-spec"],
         )
+    if missing and not allow_partial:
+        # Fail loudly: a missing resource file means that agent was never
+        # deployed (or its file got lost). Silent skip masks the gap from
+        # the Topology view and the OnlineEvaluator. To intentionally
+        # register a partial set, set REGISTRY_ALLOW_PARTIAL=1.
+        print(
+            f"\n❌ {len(missing)} agent(s) not registered because their "
+            f"resource files are missing:",
+            file=sys.stderr,
+        )
+        for entry in missing:
+            print(f"   - {entry}", file=sys.stderr)
+        print(
+            "\n   Fix: re-run `make enterprise-deploy` to recreate the "
+            "missing Reasoning Engines (the deploy script writes the "
+            "resource files). To register the available subset anyway, "
+            "set REGISTRY_ALLOW_PARTIAL=1.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 
 def main() -> None:

@@ -239,15 +239,34 @@ def deploy_all_specialists() -> None:
     print(f"📌 Specialists will share orchestrator Memory Bank: agent_engine_id={orchestrator_engine_id}")
 
     manifest: dict[str, str] = {}
+    failed: list[str] = []
     for entry in SPECIALIST_REGISTRY:
         resource = _deploy_specialist(entry, orchestrator_engine_id)
         if resource:
             manifest[entry["display_name"]] = resource
+        else:
+            failed.append(entry["display_name"])
 
     with open("deployed_specialist_agents.json", "w") as f:
         json.dump(manifest, f, indent=2)
 
     print("\n📒 Manifest written to deployed_specialist_agents.json")
+    if failed:
+        # Loud failure: a partial specialist deploy means some
+        # deployed_*_resource.txt files are missing, which means downstream
+        # registration / online-monitor / smoke steps will silently skip
+        # the unhealthy specialist. Surface this immediately so the
+        # operator decides whether to retry or rollback.
+        print(
+            f"\n❌ {len(failed)} specialist deploy(s) FAILED: {', '.join(failed)}",
+            file=sys.stderr,
+        )
+        print(
+            "   Re-run after fixing the underlying error. Existing successful "
+            "specialists are recorded and will be reused.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     print("👉 All deployed specialists should now appear in the Vertex AI Console Agent Engine list with a working Playground tab.")
 
 
