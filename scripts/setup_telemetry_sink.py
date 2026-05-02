@@ -24,6 +24,7 @@ PROJECT_ID = os.environ.get("GCP_PROJECT")
 LOCATION = os.environ.get("GCP_LOCATION", "us-central1")
 DATASET_ID = os.environ.get("BQ_LOGS_DATASET", "agent_telemetry")
 TRACES_TABLE = os.environ.get("BQ_LOGS_TABLE", "agent_traces")
+ANNOTATIONS_TABLE = os.environ.get("BQ_ANNOTATIONS_TABLE", "human_annotations")
 SINK_NAME = os.environ.get("BQ_LOG_SINK_NAME", "agent_mcp_to_bq")
 
 

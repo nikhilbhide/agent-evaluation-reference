@@ -8,6 +8,7 @@ from vertexai.preview.evaluation import EvalTask
 from agent_eval.agent.core import init_agent, run_customer_resolution_agent
 from agent_eval.agent.endpoint import run_agent_via_endpoint
 from agent_eval.evaluation.metrics import BUILTIN_METRICS, get_resolution_metric
+from agent_eval.evaluation import programmatic
 from agent_eval.utils.logger import get_logger
 from agent_eval.utils import trace_logger
 
@@ -154,6 +155,20 @@ def evaluate_agent(
     if len(df) > 0:
         logger.info(f"[Sample Response]\nPrompt: {df['prompt'].iloc[0]}\nAgent: {df['response'].iloc[0][:150]}...\n")
 
+    logger.info("========== PROGRAMMATIC CHECKS (code-based eval plane) ==========")
+    df = programmatic.run_checks(df)
+    prog_passed, prog_summary = programmatic.gate_summary(df)
+    logger.info(prog_summary)
+    for idx, row in df.iterrows():
+        marker = "✅" if row["programmatic_pass"] else "❌"
+        logger.info(f"  {marker} row {idx}: {row['programmatic_detail']}")
+    if not prog_passed:
+        logger.error(
+            "❌ PROGRAMMATIC GATE FAILED: at least one row failed a required "
+            "deterministic check (route/refusal). Continuing to LLM-judge for "
+            "full reporting; the runner will exit non-zero at the end."
+        )
+
     logger.info("Defining the Custom Resolution Metric Rubric for Multi-Agent Eval...")
     resolution_metric = get_resolution_metric()
     
@@ -175,6 +190,18 @@ def evaluate_agent(
             logger.info(f"Average {metric_name.replace('_', ' ').title()} Score: {value}")
         logger.info(f"Average CUSTOM Resolution Score: {summary.get('pointwise_metric_score', 'N/A')}")
         
+        # Carry programmatic columns from the input df into the EvalTask
+        # output so BigQuery / Cloud Monitoring see both planes side-by-side.
+        for col in ("programmatic_pass", "programmatic_score", "programmatic_detail"):
+            if col in df.columns and col not in result.metrics_table.columns:
+                result.metrics_table[col] = df[col].values
+
+        # Surface a programmatic pass-rate scalar to Cloud Monitoring so the
+        # code-based plane has a dashboard line alongside the LLM-judge means.
+        if "programmatic_pass" in df.columns and len(df) > 0:
+            summary["programmatic_pass_rate/mean"] = float(df["programmatic_pass"].mean())
+            summary["programmatic_score/mean"] = float(df["programmatic_score"].mean())
+
         # Log to Cloud Monitoring for historical dashboarding (with labels for
         # per-experiment + per-engine grouping in the dashboard).
         engine_id = _engine_id_from_endpoint(endpoint_url)
@@ -226,24 +253,35 @@ def evaluate_agent(
         
         # ── Quality Gate ──────────────────────────────────────────────────
         logger.info("========== QUALITY GATE ==========")
+        gate_passed = True
+
+        # Programmatic gate (code-based plane) was already evaluated above.
+        if not prog_passed:
+            logger.error("❌ Programmatic gate failed (see PROGRAMMATIC CHECKS above).")
+            gate_passed = False
+
+        # Safety gate (LLM-judge plane).
         avg_safety = summary.get("safety/mean", None)
         if avg_safety is not None:
             if avg_safety < safety_threshold:
                 logger.error(
-                    f"❌ QUALITY GATE FAILED: safety/mean={avg_safety:.2f} "
-                    f"is below threshold {safety_threshold:.2f}. "
-                    f"Deployment blocked."
+                    f"❌ Safety gate failed: safety/mean={avg_safety:.2f} "
+                    f"< threshold {safety_threshold:.2f}."
                 )
-                result.metrics_table.attrs["gate_passed"] = False
+                gate_passed = False
             else:
                 logger.info(
-                    f"✅ QUALITY GATE PASSED: safety/mean={avg_safety:.2f} "
+                    f"✅ Safety gate passed: safety/mean={avg_safety:.2f} "
                     f">= threshold {safety_threshold:.2f}."
                 )
-                result.metrics_table.attrs["gate_passed"] = True
         else:
-            logger.warning("Safety metric not present in results; skipping gate check.")
-            result.metrics_table.attrs["gate_passed"] = True
+            logger.warning("Safety metric not present in results; skipping safety gate.")
+
+        if gate_passed:
+            logger.info("✅ ALL QUALITY GATES PASSED.")
+        else:
+            logger.error("❌ ONE OR MORE QUALITY GATES FAILED. Deployment blocked.")
+        result.metrics_table.attrs["gate_passed"] = gate_passed
 
         logger.info("Evaluation Complete. Check Vertex AI Experiments UI in GCP Console for full historical results.")
         return result.metrics_table

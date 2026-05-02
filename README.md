@@ -16,39 +16,39 @@ tool execution.
 
 ```mermaid
 graph TD
-    subgraph CLIENTS [Clients]
-        USERS((End user / Console Playground))
-        EVAL[Vertex AI EvalTask<br/>Gemini-as-judge<br/>offline / batch]
-        REDTEAM[Red-team simulation<br/>scripts/run_simulation.py]
+    subgraph CLIENTS["Clients"]
+        USERS(("End user / Console Playground"))
+        EVAL["Vertex AI EvalTask<br/>Gemini-as-judge<br/>offline / batch"]
+        REDTEAM["Red-team simulation<br/>scripts/run_simulation.py"]
     end
 
-    subgraph AE [Vertex AI Agent Engine]
-        ORCH[Orchestrator<br/>customer-resolution-orchestrator]
-        BILL[billing-specialist]
-        ACCT[account-specialist]
-        TECH[technical-specialist]
+    subgraph AE["Vertex AI Agent Engine"]
+        ORCH["Orchestrator<br/>customer-resolution-orchestrator"]
+        BILL["billing-specialist"]
+        ACCT["account-specialist"]
+        TECH["technical-specialist"]
         ORCH -->|AgentTool| BILL
         ORCH -->|AgentTool| ACCT
         ORCH -->|AgentTool| TECH
     end
 
-    subgraph MCP [Cloud Run]
-        MCPSRV[MCP Tool Server<br/>/mcp/tools/list, /mcp/tools/call<br/>OTel-instrumented]
+    subgraph MCP_GROUP["Cloud Run"]
+        MCPSRV["MCP Tool Server<br/>tools/list and tools/call<br/>OTel-instrumented"]
     end
 
-    subgraph DATA [Managed services]
-        MB[(Memory Bank<br/>per-engine sessions + memories)]
-        BQ[(BigQuery<br/>agent_telemetry.agent_traces)]
-        CT[(Cloud Trace<br/>OTel spans)]
-        CM[(Cloud Monitoring<br/>custom.googleapis.com/agent/evaluation/*)]
-        SCC[Security Command Center<br/>ABOM findings]
-        ARMOR[Model Armor<br/>prompt injection / data exfil]
+    subgraph DATA["Managed services"]
+        MB[("Memory Bank<br/>per-engine sessions and memories")]
+        BQ[("BigQuery<br/>agent_telemetry agent_traces")]
+        CT[("Cloud Trace<br/>OTel spans")]
+        CM[("Cloud Monitoring<br/>custom agent evaluation metrics")]
+        SCC["Security Command Center<br/>ABOM findings"]
+        ARMOR["Model Armor<br/>prompt injection / data exfil"]
     end
 
-    subgraph PLATFORM [Agent Platform]
-        REG[Agent Registry<br/>1 MCP + 4 agents]
-        TOPO[Topology View]
-        ONLINE[Online Evaluator<br/>samples live traces]
+    subgraph PLATFORM["Agent Platform"]
+        REG["Agent Registry<br/>1 MCP + 4 agents"]
+        TOPO["Topology View"]
+        ONLINE["Online Evaluator<br/>samples live traces"]
     end
 
     USERS --> ORCH
@@ -58,26 +58,26 @@ graph TD
     BILL --> MCPSRV
     ACCT --> MCPSRV
     TECH --> MCPSRV
-    ORCH -.MCP egress<br/>signed by orchestrator GSA.-> MCPSRV
+    ORCH -. "MCP egress (signed by orchestrator GSA)" .-> MCPSRV
 
     ORCH <--> MB
     BILL <--> MB
     ACCT <--> MB
     TECH <--> MB
 
-    ORCH -.before_model.-> ARMOR
-    ORCH -.spans<br/>enable_tracing=True.-> CT
-    MCPSRV -.spans<br/>tracing.py.-> CT
-    EVAL -.scores.-> BQ
-    EVAL -.scores.-> CM
-    ORCH -.ABOM.-> SCC
+    ORCH -. "before_model" .-> ARMOR
+    ORCH -. "spans (enable_tracing=True)" .-> CT
+    MCPSRV -. "spans (tracing module)" .-> CT
+    EVAL -. "scores" .-> BQ
+    EVAL -. "scores" .-> CM
+    ORCH -. "ABOM" .-> SCC
 
     REG --- ORCH
     REG --- MCPSRV
-    TOPO -.reads.-> CT
-    TOPO -.reads.-> REG
-    ONLINE -.samples.-> CT
-    ONLINE -.judge metrics.-> BQ
+    TOPO -. "reads" .-> CT
+    TOPO -. "reads" .-> REG
+    ONLINE -. "samples" .-> CT
+    ONLINE -. "judge metrics" .-> BQ
 ```
 
 The orchestrator is a Gemini-Pro ADK agent that delegates to three Gemini-Flash
@@ -94,6 +94,70 @@ Platform Registry + Topology view stitches the two together so the agent ↔ MCP
 graph renders in the console. The Online Evaluator continuously samples live
 traces and runs Gemini-as-judge metrics on them — the production counterpart
 to offline `EvalTask`.
+
+---
+
+## Two Planes of Agent Evaluation
+
+This repo's primary purpose is to be a **reference implementation for evaluating
+LLM agents**. The deploy / IAM / observability machinery exists to give the
+evaluation planes a realistic agent under test. There are two planes — each
+catches a different class of failure, and together they form the gate that
+decides whether a candidate agent is allowed to take production traffic.
+
+| Plane | What it catches | Cost | When it runs |
+|---|---|---|---|
+| **Code-based / programmatic** | Routing regressions, tool-trajectory drift, refusal bypasses, schema breakage, multi-turn context loss | ~ms, no GCP | Every PR / pre-commit / CI |
+| **Model / LLM-as-judge** | Helpfulness, safety, groundedness, instruction-following, custom rubrics | seconds, judge LLM calls | Pre-deploy CI gate, post-deploy CD gate, online sampling |
+
+### 1. Code-based / programmatic — `src/agent_eval/evaluation/programmatic.py`
+
+Deterministic checks that consume metadata already declared on each golden-set
+row (`_meta.expected_route`, `_meta.expected_tools`, `_meta.is_adversarial`,
+`_meta.is_multi_turn`). No LLM calls; no GCP credentials needed. Run on every
+PR via `make eval-fast`. Five required + advisory checks today:
+
+- **route_match** *(required)* — actual specialist matches `expected_route`.
+- **tool_trajectory** — `expected_tools ⊆ actual_tools` (advisory until the
+  live endpoint surfaces ADK `function_call` events; mock mode parses the
+  response text).
+- **refusal** *(required)* — adversarial rows must show refusal language, no
+  leakage, and no tool calls.
+- **schema** — billing responses claiming a refund must include a `REF-INV-*`
+  ID; invoice references match `INV-*`.
+- **multi_turn** — multi-turn cases must reuse `session_id` and reference
+  the prior turn's entity (e.g. invoice ID).
+
+The runner runs these *before* the LLM-judge call so a routing or refusal
+regression is caught in 200 ms — and the failure surfaces in the same
+`gate_passed` exit code that blocks deployment.
+
+A second deterministic flavor lives at `data/adk_eval_set.evalset.json` +
+`scripts/run_adk_eval.py`: ADK's native `AgentEvaluator`, which runs the
+local agent in-process and asserts on trajectory and final-response similarity.
+Run with `make eval-adk`.
+
+### 2. LLM-as-judge — `src/agent_eval/evaluation/runner.py`
+
+Vertex AI `EvalTask` with five built-in pointwise metrics (`safety`,
+`groundedness`, `instruction_following`, `question_answering_quality`,
+`text_quality`) plus a custom `PointwiseMetricPromptTemplate` for routing
+accuracy + helpfulness rubrics. `safety/mean < 0.9` blocks the deploy gate.
+Results land in BigQuery (`agent_telemetry.agent_traces`), Cloud Monitoring
+(`custom.googleapis.com/agent/evaluation/*`), and Vertex AI Experiments.
+
+The production counterpart is the **Online Evaluator**
+(`scripts/create_online_monitor.py`) — same metrics, sampled continuously from
+live Cloud Trace spans.
+
+### Targets
+
+```bash
+make eval-fast    # plane 1 only — pytest the programmatic checks (no GCP)
+make eval         # planes 1 + 2 against the CI mock agent
+make eval-live    # planes 1 + 2 against the deployed orchestrator
+make eval-adk     # plane 1 (ADK AgentEvaluator) against the local agent
+```
 
 ---
 

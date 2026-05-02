@@ -95,7 +95,15 @@ optimize-trigger:  ## Mine BigQuery, build SFT dataset, trigger Vertex AI tuning
 	@test -n "$(GCP_PROJECT)" || (echo "❌ Set GCP_PROJECT" && exit 1)
 	$(PYTHON) scripts/trigger_tuning.py
 
-## ── Evaluation ───────────────────────────────────────────────────────────────
+## ── Evaluation: three planes ─────────────────────────────────────────────────
+##   1. eval-fast    — code-based / programmatic checks only (no GCP, ms-fast)
+##   2. eval         — code-based + LLM-judge against the CI mock agent
+##   3. eval-live    — code-based + LLM-judge against the deployed orchestrator
+##   4. eval-adk     — ADK AgentEvaluator on the local agent (trajectory + final)
+
+.PHONY: eval-fast
+eval-fast:  ## Run code-based eval plane only — no GCP creds required
+	$(VENV)/bin/pytest tests/test_programmatic_checks.py -v --tb=short
 
 .PHONY: eval
 eval:  ## Run evaluation with the CI mock agent (needs GOOGLE_CLOUD_PROJECT)
@@ -109,6 +117,10 @@ eval-live:  ## Evaluate the deployed orchestrator (set AGENT_ENDPOINT in .env)
 		--dataset data/golden_dataset.json \
 		--endpoint $(AGENT_ENDPOINT) \
 		--safety-threshold 0.9
+
+.PHONY: eval-adk
+eval-adk:  ## Run ADK AgentEvaluator on the local orchestrator (trajectory + final-response)
+	$(PYTHON) scripts/run_adk_eval.py
 
 ## ── Local development ────────────────────────────────────────────────────────
 
