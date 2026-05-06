@@ -51,6 +51,12 @@ graph TD
         ONLINE["Online Evaluator<br/>samples live traces"]
     end
 
+    subgraph HITL_GROUP["HITL plane"]
+        HITL["Disagreement queue<br/>scripts/run_hitl.py"]
+        ANNOT[("BigQuery<br/>human_annotations")]
+        HITL --- ANNOT
+    end
+
     USERS --> ORCH
     EVAL --> ORCH
     REDTEAM --> ORCH
@@ -78,6 +84,9 @@ graph TD
     TOPO -.->|reads| REG
     ONLINE -.->|samples| CT
     ONLINE -.->|judge metrics| BQ
+
+    HITL -.->|reads disagreements| BQ
+    HITL -.->|writes verdicts| ANNOT
 ```
 
 The orchestrator is a Gemini-Pro ADK agent that delegates to three Gemini-Flash
@@ -95,13 +104,19 @@ graph renders in the console. The Online Evaluator continuously samples live
 traces and runs Gemini-as-judge metrics on them — the production counterpart
 to offline `EvalTask`.
 
+**Three evaluation planes:** code-based / programmatic checks
+(`programmatic.py`) for routing and refusal regressions; LLM-as-judge
+(`runner.py` + Online Evaluator) for safety / groundedness / quality; and
+human-in-the-loop (`hitl.py`) on the *disagreements* between the two — the
+cheapest signal for judge calibration drift.
+
 ---
 
-## Two Planes of Agent Evaluation
+## Three Planes of Agent Evaluation
 
 This repo's primary purpose is to be a **reference implementation for evaluating
 LLM agents**. The deploy / IAM / observability machinery exists to give the
-evaluation planes a realistic agent under test. There are two planes — each
+evaluation planes a realistic agent under test. There are three planes — each
 catches a different class of failure, and together they form the gate that
 decides whether a candidate agent is allowed to take production traffic.
 
@@ -109,6 +124,7 @@ decides whether a candidate agent is allowed to take production traffic.
 |---|---|---|---|
 | **Code-based / programmatic** | Routing regressions, tool-trajectory drift, refusal bypasses, schema breakage, multi-turn context loss | ~ms, no GCP | Every PR / pre-commit / CI |
 | **Model / LLM-as-judge** | Helpfulness, safety, groundedness, instruction-following, custom rubrics | seconds, judge LLM calls | Pre-deploy CI gate, post-deploy CD gate, online sampling |
+| **Human-in-the-loop (disagreement)** | Judge calibration drift; cases where code gate and judge disagree, or judge is borderline | minutes per row, async | Periodic batch — humans only label disagreements, not every row |
 
 ### 1. Code-based / programmatic — `src/agent_eval/evaluation/programmatic.py`
 
@@ -150,13 +166,44 @@ The production counterpart is the **Online Evaluator**
 (`scripts/create_online_monitor.py`) — same metrics, sampled continuously from
 live Cloud Trace spans.
 
+### 3. Human-in-the-loop — `src/agent_eval/evaluation/hitl.py`
+
+Humans don't grade every row — too expensive, too slow. They grade the rows
+where the **code-based and LLM-judge planes disagree**, or where the judge is
+borderline. That's the cheapest signal for catching judge calibration drift:
+if the judge keeps passing rows the human labels `bad`, the rubric is wrong.
+
+The plane is three subcommands on top of an append-only BigQuery table
+`agent_telemetry.human_annotations` (latest-per-id wins):
+
+```bash
+make eval-hitl-enqueue   # scan agent_traces, queue disagreements
+make eval-hitl-label     # interactive CLI: good / bad / partial / skip / quit
+make eval-hitl-report    # judge-vs-human and code-vs-human agreement rates
+```
+
+A row is queued when:
+
+- code gate **failed** but the judge gave it a **pass** (`safety_score >= 0.9`),
+- code gate **passed** but the judge **flagged** it (`safety_score < 0.9`), or
+- the judge is in the **borderline band** (`0.70–0.85`) regardless of code gate.
+
+A falling `judge_agree_rate` over time is a leading indicator that the LLM
+judge needs to be re-prompted or swapped — long before any production
+incident makes the problem obvious. The labeling CLI is intentionally a thin
+terminal prompt; the storage format is what matters and is reusable behind a
+nicer UI later.
+
 ### Targets
 
 ```bash
-make eval-fast    # plane 1 only — pytest the programmatic checks (no GCP)
-make eval         # planes 1 + 2 against the CI mock agent
-make eval-live    # planes 1 + 2 against the deployed orchestrator
-make eval-adk     # plane 1 (ADK AgentEvaluator) against the local agent
+make eval-fast            # plane 1 only — pytest programmatic + hitl logic (no GCP)
+make eval                 # planes 1 + 2 against the CI mock agent
+make eval-live            # planes 1 + 2 against the deployed orchestrator
+make eval-adk             # plane 1 (ADK AgentEvaluator) against the local agent
+make eval-hitl-enqueue    # plane 3 — populate the human review queue
+make eval-hitl-label      # plane 3 — label the queue
+make eval-hitl-report     # plane 3 — agreement rates
 ```
 
 ---

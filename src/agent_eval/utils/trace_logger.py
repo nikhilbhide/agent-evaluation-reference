@@ -64,6 +64,8 @@ def eval_row(
     category: str | None = None,
     session_id: str | None = None,
     user_id: str | None = None,
+    programmatic_pass: bool | None = None,
+    programmatic_score: float | None = None,
 ) -> dict[str, Any]:
     return {
         "run_id": run_id,
@@ -82,6 +84,8 @@ def eval_row(
         "question_answering_quality_score": metrics.get("question_answering_quality/score"),
         "text_quality_score": metrics.get("text_quality/score"),
         "custom_score": metrics.get("pointwise_metric_score"),
+        "programmatic_pass": programmatic_pass,
+        "programmatic_score": programmatic_score,
         "expected_route": expected_route,
         "category": category,
     }

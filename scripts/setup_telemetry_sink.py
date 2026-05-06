@@ -5,6 +5,8 @@ Creates:
   - dataset: agent_telemetry
   - table:   agent_telemetry.agent_traces
               (one row per evaluated turn — prompt, response, scores, source)
+  - table:   agent_telemetry.human_annotations
+              (append-only HITL queue; latest-per-id wins)
   - log sink: agent_mcp_to_bq routes MCP tool-call logs into
               agent_telemetry.mcp_tool_calls (auto-created by the sink).
 
@@ -46,10 +48,39 @@ TRACE_SCHEMA = [
     bigquery.SchemaField("question_answering_quality_score", "FLOAT"),
     bigquery.SchemaField("text_quality_score", "FLOAT"),
     bigquery.SchemaField("custom_score", "FLOAT"),
+    bigquery.SchemaField("programmatic_pass", "BOOL"),
+    bigquery.SchemaField("programmatic_score", "FLOAT"),
     bigquery.SchemaField("redteam_pass", "BOOL"),
     bigquery.SchemaField("redteam_severity", "STRING"),
     bigquery.SchemaField("expected_route", "STRING"),
     bigquery.SchemaField("category", "STRING"),
+]
+
+
+ANNOTATION_SCHEMA = [
+    bigquery.SchemaField("created_at", "TIMESTAMP", mode="REQUIRED"),
+    bigquery.SchemaField("annotation_id", "STRING", mode="REQUIRED",
+                         description="sha1(run_id+prompt+response)[:16]"),
+    bigquery.SchemaField("status", "STRING",
+                         description="pending | labeled"),
+    bigquery.SchemaField("run_id", "STRING"),
+    bigquery.SchemaField("experiment", "STRING"),
+    bigquery.SchemaField("source", "STRING"),
+    bigquery.SchemaField("prompt", "STRING"),
+    bigquery.SchemaField("response", "STRING"),
+    bigquery.SchemaField("expected_route", "STRING"),
+    bigquery.SchemaField("category", "STRING"),
+    bigquery.SchemaField("code_pass", "BOOL"),
+    bigquery.SchemaField("code_score", "FLOAT"),
+    bigquery.SchemaField("judge_safety", "FLOAT"),
+    bigquery.SchemaField("judge_custom", "FLOAT"),
+    bigquery.SchemaField("disagreement_reason", "STRING",
+                         description="judge_pass_code_fail | judge_fail_code_pass | judge_borderline"),
+    bigquery.SchemaField("human_verdict", "STRING",
+                         description="good | bad | partial (skip rows aren't written)"),
+    bigquery.SchemaField("human_note", "STRING"),
+    bigquery.SchemaField("labeler", "STRING"),
+    bigquery.SchemaField("labeled_at", "TIMESTAMP"),
 ]
 
 
@@ -64,24 +95,30 @@ def ensure_dataset(client: bigquery.Client) -> str:
     return f"{PROJECT_ID}.{DATASET_ID}"
 
 
-def ensure_table(client: bigquery.Client, dataset_fqn: str) -> str:
-    table_fqn = f"{dataset_fqn}.{TRACES_TABLE}"
+def ensure_table(
+    client: bigquery.Client,
+    dataset_fqn: str,
+    table_id: str,
+    schema: list,
+    partition_field: str,
+) -> str:
+    table_fqn = f"{dataset_fqn}.{table_id}"
     try:
         existing = client.get_table(table_fqn)
-        print(f"   ✅ table {TRACES_TABLE} already exists ({len(existing.schema)} cols)")
+        print(f"   ✅ table {table_id} already exists ({len(existing.schema)} cols)")
         # Idempotent schema patch — adds missing fields (BQ permits adding only).
         existing_fields = {f.name for f in existing.schema}
-        new_fields = [f for f in TRACE_SCHEMA if f.name not in existing_fields]
+        new_fields = [f for f in schema if f.name not in existing_fields]
         if new_fields:
             updated_schema = list(existing.schema) + new_fields
             existing.schema = updated_schema
             client.update_table(existing, ["schema"])
-            print(f"   ✅ added {len(new_fields)} new fields to {TRACES_TABLE}")
+            print(f"   ✅ added {len(new_fields)} new fields to {table_id}")
     except NotFound:
-        table = bigquery.Table(table_fqn, schema=TRACE_SCHEMA)
-        table.time_partitioning = bigquery.TimePartitioning(field="timestamp")
+        table = bigquery.Table(table_fqn, schema=schema)
+        table.time_partitioning = bigquery.TimePartitioning(field=partition_field)
         client.create_table(table)
-        print(f"   ✅ created table {TRACES_TABLE} (partitioned on timestamp)")
+        print(f"   ✅ created table {table_id} (partitioned on {partition_field})")
     return table_fqn
 
 
@@ -136,14 +173,17 @@ def main() -> None:
 
     print(f"📡 Provisioning telemetry sink in {PROJECT_ID} ({LOCATION})")
 
-    print("\n[1/3] BigQuery dataset")
+    print("\n[1/4] BigQuery dataset")
     bq_client = bigquery.Client(project=PROJECT_ID, location=LOCATION)
     dataset_fqn = ensure_dataset(bq_client)
 
-    print("\n[2/3] BigQuery trace table")
-    ensure_table(bq_client, dataset_fqn)
+    print("\n[2/4] BigQuery trace table")
+    ensure_table(bq_client, dataset_fqn, TRACES_TABLE, TRACE_SCHEMA, "timestamp")
 
-    print("\n[3/3] Cloud Logging → BigQuery sink (MCP tool calls)")
+    print("\n[3/4] BigQuery human-annotations table (HITL plane)")
+    ensure_table(bq_client, dataset_fqn, ANNOTATIONS_TABLE, ANNOTATION_SCHEMA, "created_at")
+
+    print("\n[4/4] Cloud Logging → BigQuery sink (MCP tool calls)")
     ensure_log_sink()
 
     print("\n✅ Telemetry sink ready. runner.py and run_simulation.py will write here.")

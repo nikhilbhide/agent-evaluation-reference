@@ -225,6 +225,8 @@ def evaluate_agent(
                         meta = json.loads(meta)
                     except Exception:
                         meta = {}
+                prog_pass = row.get("programmatic_pass")
+                prog_score = row.get("programmatic_score")
                 rows.append(trace_logger.eval_row(
                     run_id=run_id,
                     experiment=experiment_name,
@@ -232,10 +234,14 @@ def evaluate_agent(
                     prompt=str(row.get("prompt", "")),
                     response=str(row.get("response", "")),
                     reference=str(row.get("reference", "")) if row.get("reference") else None,
-                    metrics={k: row.get(k) for k in row.index if isinstance(row.get(k), (int, float))},
+                    metrics={k: row.get(k) for k in row.index
+                             if isinstance(row.get(k), (int, float))
+                             and not isinstance(row.get(k), bool)},
                     expected_route=meta.get("expected_route"),
                     category=meta.get("category"),
                     session_id=str(row.get("session_id", "")) or None,
+                    programmatic_pass=bool(prog_pass) if prog_pass is not None else None,
+                    programmatic_score=float(prog_score) if isinstance(prog_score, (int, float)) else None,
                 ))
             trace_logger.write_rows(project_id, rows)
         except Exception as exc:

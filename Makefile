@@ -96,14 +96,13 @@ optimize-trigger:  ## Mine BigQuery, build SFT dataset, trigger Vertex AI tuning
 	$(PYTHON) scripts/trigger_tuning.py
 
 ## ── Evaluation: three planes ─────────────────────────────────────────────────
-##   1. eval-fast    — code-based / programmatic checks only (no GCP, ms-fast)
-##   2. eval         — code-based + LLM-judge against the CI mock agent
-##   3. eval-live    — code-based + LLM-judge against the deployed orchestrator
-##   4. eval-adk     — ADK AgentEvaluator on the local agent (trajectory + final)
+##   1. code-based  → eval-fast (programmatic.py) + eval-adk (ADK AgentEvaluator)
+##   2. LLM-judge   → eval (CI mock) + eval-live (deployed orchestrator)
+##   3. HITL        → eval-hitl-* (disagreement adjudication on labeled rows)
 
 .PHONY: eval-fast
 eval-fast:  ## Run code-based eval plane only — no GCP creds required
-	$(VENV)/bin/pytest tests/test_programmatic_checks.py -v --tb=short
+	$(VENV)/bin/pytest tests/test_programmatic_checks.py tests/test_hitl.py -v --tb=short
 
 .PHONY: eval
 eval:  ## Run evaluation with the CI mock agent (needs GOOGLE_CLOUD_PROJECT)
@@ -121,6 +120,21 @@ eval-live:  ## Evaluate the deployed orchestrator (set AGENT_ENDPOINT in .env)
 .PHONY: eval-adk
 eval-adk:  ## Run ADK AgentEvaluator on the local orchestrator (trajectory + final-response)
 	$(PYTHON) scripts/run_adk_eval.py
+
+.PHONY: eval-hitl-enqueue
+eval-hitl-enqueue:  ## HITL plane — scan agent_traces, queue judge↔code disagreements
+	@test -n "$(GCP_PROJECT)" || (echo "❌ Set GCP_PROJECT" && exit 1)
+	$(PYTHON) scripts/run_hitl.py enqueue $(HITL_ARGS)
+
+.PHONY: eval-hitl-label
+eval-hitl-label:  ## HITL plane — interactive labeling of pending rows (set HITL_LABELER)
+	@test -n "$(GCP_PROJECT)" || (echo "❌ Set GCP_PROJECT" && exit 1)
+	$(PYTHON) scripts/run_hitl.py label $(HITL_ARGS)
+
+.PHONY: eval-hitl-report
+eval-hitl-report:  ## HITL plane — judge-vs-human and code-vs-human agreement rates
+	@test -n "$(GCP_PROJECT)" || (echo "❌ Set GCP_PROJECT" && exit 1)
+	$(PYTHON) scripts/run_hitl.py report
 
 ## ── Local development ────────────────────────────────────────────────────────
 
