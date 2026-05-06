@@ -58,26 +58,26 @@ graph TD
     BILL --> MCPSRV
     ACCT --> MCPSRV
     TECH --> MCPSRV
-    ORCH -. "MCP egress (signed by orchestrator GSA)" .-> MCPSRV
+    ORCH -.->|MCP egress via orchestrator GSA| MCPSRV
 
     ORCH <--> MB
     BILL <--> MB
     ACCT <--> MB
     TECH <--> MB
 
-    ORCH -. "before_model" .-> ARMOR
-    ORCH -. "spans (enable_tracing=True)" .-> CT
-    MCPSRV -. "spans (tracing module)" .-> CT
-    EVAL -. "scores" .-> BQ
-    EVAL -. "scores" .-> CM
-    ORCH -. "ABOM" .-> SCC
+    ORCH -.->|before_model| ARMOR
+    ORCH -.->|enable_tracing spans| CT
+    MCPSRV -.->|tracing spans| CT
+    EVAL -.->|scores| BQ
+    EVAL -.->|scores| CM
+    ORCH -.->|ABOM| SCC
 
     REG --- ORCH
     REG --- MCPSRV
-    TOPO -. "reads" .-> CT
-    TOPO -. "reads" .-> REG
-    ONLINE -. "samples" .-> CT
-    ONLINE -. "judge metrics" .-> BQ
+    TOPO -.->|reads| CT
+    TOPO -.->|reads| REG
+    ONLINE -.->|samples| CT
+    ONLINE -.->|judge metrics| BQ
 ```
 
 The orchestrator is a Gemini-Pro ADK agent that delegates to three Gemini-Flash
