@@ -290,6 +290,60 @@ under `scripts/` and one or more `make` targets.
 
 Run `make help` for the full target list.
 
+### Latest load-test baseline
+
+5-minute soak against the deployed orchestrator
+(`projects/56229383127/locations/us-central1/reasoningEngines/2505026687410896896`),
+target 1 QPS with concurrency cap 4. Reproduce with:
+
+```bash
+GCP_PROJECT=agent-evaluation-reference \
+ORCHESTRATOR_RESOURCE=$(cat deployed_agent_resource.txt) \
+DURATION_SECONDS=300 TARGET_QPS=1.0 CONCURRENCY=4 \
+make load-test
+```
+
+| Metric | Value |
+|---|---|
+| Calls started | 109 |
+| Succeeded | 108 (99.1%) |
+| Failed | 1 (0.9% — one transient `400 Reasoning Engine Execution failed` in `technical`) |
+| Actual QPS | 0.36 |
+| p50 latency | 8.88 s |
+| p95 latency | 16.34 s |
+| p99 latency | 19.20 s |
+| Distribution | billing 39, account 38, technical 32 |
+
+The actual QPS sits well below the 1.0 target because each call's median
+latency (~9 s) × the concurrency cap (4) puts the throughput ceiling at
+~0.44 QPS. To raise throughput either bump `CONCURRENCY` or accept that
+1 QPS isn't achievable until per-call latency drops. p95 of 16 s is the
+number to watch for regression — anything past ~25 s usually means the
+orchestrator is fanning out to all three specialists serially instead of
+short-circuiting on the first match.
+
+Per-call telemetry from the load run lands in
+`agent_telemetry.agent_traces` with `source='load_test'`, so the HITL
+queue and dashboards see it alongside eval and red-team rows.
+
+### Deploy this branch's HITL plane changes
+
+The agents themselves don't need redeployment for this branch — the
+change set is data-plane only:
+
+```bash
+GCP_PROJECT=agent-evaluation-reference make setup-telemetry
+```
+
+That adds `programmatic_pass` / `programmatic_score` to `agent_traces`
+and creates the `human_annotations` table. After it runs:
+
+```bash
+make eval-hitl-enqueue HITL_ARGS="--since-hours 24"   # populate the queue
+make eval-hitl-label   HITL_ARGS="--limit 10"         # interactive labeler
+make eval-hitl-report                                 # judge↔human agreement
+```
+
 ---
 
 ## Quality Gate — Three Tiers
