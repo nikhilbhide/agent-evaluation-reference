@@ -35,29 +35,35 @@ echo " MCP service : ${MCP_SERVICE} (${MCP_REGION})"
 echo "====================================================="
 
 # ── 1. Create one GSA per agent role ──────────────────────────────────────────
+# Two-pass: create all four SAs first, then bind roles. Binding immediately
+# after create races against IAM read-after-write consistency on greenfield
+# projects (`add-iam-policy-binding` returns INVALID_ARGUMENT "does not exist"
+# even though the create call succeeded).
 AGENT_ROLES=("orchestrator" "billing" "technical" "account")
 
 for ROLE in "${AGENT_ROLES[@]}"; do
   SA_NAME="agent-${ROLE}"
-  SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
-
   echo "👤 Creating identity for ${ROLE}..."
   gcloud iam service-accounts create "${SA_NAME}" \
     --display-name="Agent Identity: ${ROLE}" \
     --project="${PROJECT_ID}" 2>/dev/null || echo "   already exists."
+done
 
-  # roles/aiplatform.user — call Gemini, run inside Agent Engine.
-  # Intentionally NOT roles/aiplatform.admin: runtime SAs should not be able
-  # to create/delete Reasoning Engines.
+echo "⏳ Waiting for IAM propagation (10s)..."
+sleep 10
+
+# roles/aiplatform.user — call Gemini, run inside Agent Engine.
+# Intentionally NOT roles/aiplatform.admin: runtime SAs should not be able
+# to create/delete Reasoning Engines.
+for ROLE in "${AGENT_ROLES[@]}"; do
+  SA_EMAIL="agent-${ROLE}@${PROJECT_ID}.iam.gserviceaccount.com"
+  echo "🔑 Granting aiplatform.user to ${ROLE}..."
   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="roles/aiplatform.user" \
     --condition=None \
     --quiet >/dev/null
 done
-
-echo "⏳ Waiting for IAM propagation (5s)..."
-sleep 5
 
 # ── 2. Orchestrator → specialist delegation ───────────────────────────────────
 echo "🔗 Granting orchestrator delegation rights on specialists..."

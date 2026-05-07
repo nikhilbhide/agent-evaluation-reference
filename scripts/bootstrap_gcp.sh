@@ -126,6 +126,7 @@ gcloud services enable \
   modelarmor.googleapis.com \
   agentregistry.googleapis.com \
   cloudapiregistry.googleapis.com \
+  securitycenter.googleapis.com \
   --project="${PROJECT_ID}" --quiet
 
 # ── 5. Grant Compute SA roles for Cloud Build → Cloud Run from source ─────────
