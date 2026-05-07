@@ -244,6 +244,7 @@ agent-evaluation-reference/
 │       └── logger.py
 │
 ├── scripts/                      # Lifecycle / ops tooling
+│   ├── bootstrap_gcp.sh          # One-shot: create project, billing, APIs, IAM, bucket, .env
 │   ├── deploy_agent_engine.py    # Deploys orchestrator (+ wires Memory Bank)
 │   ├── register_agents.py        # Deploys all 3 specialists
 │   ├── redeploy_all.py           # Tears down + redeploys all 4 agents
@@ -475,7 +476,33 @@ steps 1-2; once agents are live the rest is fast.
 - Python 3.10+ for the deploy environment (Agent Engine refuses 3.9)
 - `gh` CLI only needed for the GitHub Actions setup at the end
 
-### 0. Project pre-flight (gotcha: Cloud Build SA in greenfield projects)
+### 0. Project pre-flight
+
+The fastest path is the bootstrap script — it creates the project, links
+billing, sets quota project, enables every API, grants the Compute SA the
+roles Cloud Build needs (the greenfield gotcha below), creates the staging
+bucket, and writes `.env`:
+
+```bash
+gcloud auth login
+gcloud auth application-default login
+
+# Find your billing account ID first:
+gcloud billing accounts list
+
+PROJECT_ID=my-eval-ref-$(date +%s) \
+BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX \
+  ./scripts/bootstrap_gcp.sh
+```
+
+The script is idempotent — re-running it on an existing project just
+reconciles APIs / IAM / bucket and re-emits `.env`. If project creation
+fails (quota, org policy, taken ID) the script prints what to fix and
+exits; create the project manually in the console and re-run to pick up
+from step 2.
+
+<details>
+<summary>Manual equivalent (what the script runs)</summary>
 
 ```bash
 PROJECT=your-project-id
@@ -508,6 +535,8 @@ done
 gcloud storage buckets create gs://agent-eval-staging-$PROJECT \
     --project=$PROJECT --location=us-central1 --uniform-bucket-level-access
 ```
+
+</details>
 
 ### 1. Bootstrap the repo
 
